@@ -339,13 +339,13 @@ enum SpaceGuardCore {
             return ("NG matched \(displayName(window)) but no Space contains it", 1)
         }
 
-        let electronId = latestCodexElectronWindowId(threadId: threadId) ?? "?"
+        let electronId = latestCodexElectronWindowId(threadId: threadId)
         let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
-        let confidence = codexCountInSpace == 1 ? "high" : "medium"
+        let confidence = electronId == nil ? "medium" : "high"
         return ("""
-        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId) cgWindowId=\(window.id) space=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
+        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId ?? "?") cgWindowId=\(window.id) space=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
         \(displayName(window))
         codexWindowsInSpace=\(codexCountInSpace)
         """, 0)
