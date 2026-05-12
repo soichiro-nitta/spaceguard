@@ -25,6 +25,48 @@ struct WindowInfo {
     let height: Double
 }
 
+struct WindowPayload: Encodable {
+    let id: Int
+    let owner: String
+    let title: String
+    let layer: Int
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct SpacePayload: Encodable {
+    let uuid: String
+    let internalSpaceId: Int?
+    let desktopIndex: Int?
+    let desktopName: String
+}
+
+struct DetectionPayload: Encodable {
+    let ok: Bool
+    let confidence: String
+    let threadId: String
+    let threadName: String?
+    let electronWindowId: String?
+    let codexWindow: WindowPayload
+    let space: SpacePayload
+    let codexWindowsInSpace: Int
+    let detectedAt: String
+}
+
+struct WindowsPayload: Encodable {
+    let ok: Bool
+    let source: String
+    let space: SpacePayload
+    let windows: [WindowPayload]
+}
+
+struct ErrorPayload: Encodable {
+    let ok: Bool
+    let error: String
+}
+
 struct SpaceInfo {
     let uuid: String
     let id: Int?
@@ -234,6 +276,38 @@ enum SpaceGuardCore {
             return "\(window.owner) #\(window.id)"
         }
         return "\(window.owner) #\(window.id) - \(window.title)"
+    }
+
+    static func windowPayload(_ window: WindowInfo) -> WindowPayload {
+        WindowPayload(
+            id: window.id,
+            owner: window.owner,
+            title: window.title,
+            layer: window.layer,
+            x: window.x,
+            y: window.y,
+            width: window.width,
+            height: window.height
+        )
+    }
+
+    static func spacePayload(_ space: SpaceInfo) -> SpacePayload {
+        SpacePayload(
+            uuid: space.uuid,
+            internalSpaceId: space.id,
+            desktopIndex: space.desktopIndex,
+            desktopName: spaceLabel(space)
+        )
+    }
+
+    static func printJSON<T: Encodable>(_ value: T) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) {
+            print(text)
+        } else {
+            print(#"{"ok":false,"error":"failed to encode json"}"#)
+        }
     }
 
     static func spaceLabel(_ space: SpaceInfo) -> String {
@@ -462,8 +536,89 @@ enum SpaceGuardCore {
             saveLastDetection(detection)
             return (formatDetection(detection), 0)
         case .failure(let error):
+            if let cached = cachedDetectionText(threadId: threadId) {
+                return (cached, 0)
+            }
             return (error.message, 1)
         }
+    }
+
+    static func detectCurrentThreadJSON(threadId: String?) -> Int32 {
+        let result = detectCurrentThreadResult(threadId: threadId)
+        switch result {
+        case .success(let detection):
+            saveLastDetection(detection)
+            printJSON(DetectionPayload(
+                ok: true,
+                confidence: detection.confidence,
+                threadId: detection.threadId,
+                threadName: detection.threadName,
+                electronWindowId: detection.electronWindowId,
+                codexWindow: windowPayload(detection.window),
+                space: spacePayload(detection.space),
+                codexWindowsInSpace: detection.codexWindowsInSpace,
+                detectedAt: ISO8601DateFormatter().string(from: Date())
+            ))
+            return 0
+        case .failure(let error):
+            if let cached = cachedDetectionPayload(threadId: threadId) {
+                printJSON(cached)
+                return 0
+            }
+            printJSON(ErrorPayload(ok: false, error: error.message))
+            return 1
+        }
+    }
+
+    static func cachedDetectionText(threadId: String?) -> String? {
+        guard
+            let threadId,
+            let cached = loadLastDetection(),
+            cached.threadId == threadId,
+            let space = loadSpaces().first(where: { $0.uuid == cached.spaceUuid })
+        else {
+            return nil
+        }
+        let windows = loadWindows()
+        let title = windows[cached.cgWindowId].map(displayName) ?? "Codex #\(cached.cgWindowId)"
+        return ("""
+        OK confidence=cached-\(cached.confidence) thread=\(cached.threadId) electronWindowId=\(cached.electronWindowId ?? "?") cgWindowId=\(cached.cgWindowId) desktop=\(space.desktopIndex.map(String.init) ?? "?") internalSpace=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
+        \(title)
+        codexWindowsInSpace=\(cached.codexWindowsInSpace)
+        """)
+    }
+
+    static func cachedDetectionPayload(threadId: String?) -> DetectionPayload? {
+        guard
+            let threadId,
+            let cached = loadLastDetection(),
+            cached.threadId == threadId,
+            let space = loadSpaces().first(where: { $0.uuid == cached.spaceUuid })
+        else {
+            return nil
+        }
+        let windows = loadWindows()
+        let window = windows[cached.cgWindowId] ?? WindowInfo(
+            id: cached.cgWindowId,
+            owner: "Codex",
+            title: "Codex",
+            layer: 0,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0
+        )
+        return DetectionPayload(
+            ok: true,
+            confidence: "cached-\(cached.confidence)",
+            threadId: cached.threadId,
+            threadName: cached.threadName,
+            electronWindowId: cached.electronWindowId,
+            codexWindow: windowPayload(window),
+            space: spacePayload(space),
+            codexWindowsInSpace: cached.codexWindowsInSpace,
+            detectedAt: cached.detectedAt
+        )
     }
 
     static func detectCurrentThreadResult(threadId: String?) -> Result<DetectionResult, DetectionError> {
@@ -553,6 +708,27 @@ enum SpaceGuardCore {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    static func windowsForLastDetectionJSON() -> Int32 {
+        guard let detection = loadLastDetection() else {
+            printJSON(ErrorPayload(ok: false, error: "current thread has not been detected yet"))
+            return 1
+        }
+        guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
+            printJSON(ErrorPayload(ok: false, error: "last detected Space was not found"))
+            return 1
+        }
+        let windows = loadWindows()
+        printJSON(WindowsPayload(
+            ok: true,
+            source: "last-detection",
+            space: spacePayload(space),
+            windows: space.windows.compactMap { windows[$0] }
+                .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+                .map(windowPayload)
+        ))
+        return 0
     }
 }
 
@@ -668,17 +844,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard bind|status|windows|detect-current-thread|assert --app <name>|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
         exit(2)
     }
 
     switch command {
+    case "help", "--help", "-h":
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
+    case "detect":
+        var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
+        if
+            let index = arguments.firstIndex(of: "--thread-id"),
+            arguments.indices.contains(index + 1)
+        {
+            threadId = arguments[index + 1]
+        }
+        if arguments.contains("--json") {
+            exit(SpaceGuardCore.detectCurrentThreadJSON(threadId: threadId))
+        }
+        let result = SpaceGuardCore.detectCurrentThread(threadId: threadId)
+        print(result.0)
+        exit(result.1)
     case "bind":
         print(SpaceGuardCore.bindCodex())
     case "status":
         print(SpaceGuardCore.statusText())
     case "windows":
-        print(SpaceGuardCore.windowsText())
+        if arguments.contains("--json") {
+            exit(SpaceGuardCore.windowsForLastDetectionJSON())
+        }
+        print(SpaceGuardCore.windowsForCurrentThreadText())
     case "detect-current-thread":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -705,7 +900,7 @@ func runCLI(arguments: [String]) {
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard bind|status|windows|detect-current-thread|assert --app <name>|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
         exit(2)
     }
 }
@@ -713,10 +908,12 @@ func runCLI(arguments: [String]) {
 let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.first == "--cli" {
     runCLI(arguments: Array(arguments.dropFirst()))
-} else {
+} else if arguments.first == "menubar" {
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
     app.setActivationPolicy(.accessory)
     app.run()
+} else {
+    runCLI(arguments: arguments)
 }
