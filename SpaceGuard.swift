@@ -42,6 +42,7 @@ struct RectInfo {
 struct DetectionResult {
     let confidence: String
     let threadId: String
+    let threadName: String?
     let electronWindowId: String?
     let window: WindowInfo
     let space: SpaceInfo
@@ -55,6 +56,7 @@ struct DetectionError: Error {
 struct LastDetection: Codable {
     let confidence: String
     let threadId: String
+    let threadName: String?
     let electronWindowId: String?
     let cgWindowId: Int
     let desktopIndex: Int?
@@ -191,6 +193,7 @@ enum SpaceGuardCore {
         let payload = LastDetection(
             confidence: detection.confidence,
             threadId: detection.threadId,
+            threadName: detection.threadName,
             electronWindowId: detection.electronWindowId,
             cgWindowId: detection.window.id,
             desktopIndex: detection.space.desktopIndex,
@@ -395,6 +398,63 @@ enum SpaceGuardCore {
         return String(text[idRange])
     }
 
+    static func currentThreadName(threadId: String) -> String? {
+        if let name = currentThreadNameFromSessionIndex(threadId: threadId) {
+            return name
+        }
+        return currentThreadNameFromSQLite(threadId: threadId)
+    }
+
+    static func currentThreadNameFromSessionIndex(threadId: String) -> String? {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".codex/session_index.jsonl")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return nil
+        }
+
+        var latestName: String?
+        for line in text.split(separator: "\n") {
+            guard
+                let data = String(line).data(using: .utf8),
+                let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                item["id"] as? String == threadId,
+                let name = item["thread_name"] as? String,
+                !name.isEmpty
+            else {
+                continue
+            }
+            latestName = name
+        }
+        return latestName
+    }
+
+    static func currentThreadNameFromSQLite(threadId: String) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        task.arguments = [
+            "\(NSHomeDirectory())/.codex/state_5.sqlite",
+            "select title from threads where id='\(threadId.replacingOccurrences(of: "'", with: "''"))' limit 1;"
+        ]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let output, !output.isEmpty {
+            return output.split(separator: "\n").first.map(String.init)
+        }
+        return nil
+    }
+
     static func detectCurrentThread(threadId: String?) -> (String, Int32) {
         let result = detectCurrentThreadResult(threadId: threadId)
         switch result {
@@ -440,6 +500,7 @@ enum SpaceGuardCore {
         return .success(DetectionResult(
             confidence: confidence,
             threadId: threadId,
+            threadName: currentThreadName(threadId: threadId),
             electronWindowId: electronId,
             window: window,
             space: space,
@@ -460,6 +521,7 @@ enum SpaceGuardCore {
         if let detection = loadLastDetection() {
             var lines = [
                 "状態: 検出済み \(detection.confidence == "high" ? "✓" : "△")",
+                "スレッド: \(detection.threadName ?? detection.threadId)",
                 "作業場所: \(detection.desktopIndex.map { "デスクトップ\($0)" } ?? "Space \(detection.internalSpaceId.map(String.init) ?? "?")")",
                 "Codexウィンドウ: #\(detection.cgWindowId)",
                 "検出日時: \(detection.detectedAt)",
