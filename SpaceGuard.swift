@@ -4,6 +4,8 @@ import Foundation
 
 let stateURL = URL(fileURLWithPath: NSHomeDirectory())
     .appendingPathComponent(".spaceguard/state.json")
+let lastDetectionURL = URL(fileURLWithPath: NSHomeDirectory())
+    .appendingPathComponent(".spaceguard/last-detection.json")
 
 struct BoundState: Codable {
     let windowId: Int
@@ -48,6 +50,18 @@ struct DetectionResult {
 
 struct DetectionError: Error {
     let message: String
+}
+
+struct LastDetection: Codable {
+    let confidence: String
+    let threadId: String
+    let electronWindowId: String?
+    let cgWindowId: Int
+    let desktopIndex: Int?
+    let internalSpaceId: Int?
+    let spaceUuid: String
+    let codexWindowsInSpace: Int
+    let detectedAt: String
 }
 
 enum SpaceGuardCore {
@@ -167,6 +181,36 @@ enum SpaceGuardCore {
         if let data = try? encoder.encode(state) {
             try? data.write(to: stateURL)
         }
+    }
+
+    static func saveLastDetection(_ detection: DetectionResult) {
+        try? FileManager.default.createDirectory(
+            at: lastDetectionURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let payload = LastDetection(
+            confidence: detection.confidence,
+            threadId: detection.threadId,
+            electronWindowId: detection.electronWindowId,
+            cgWindowId: detection.window.id,
+            desktopIndex: detection.space.desktopIndex,
+            internalSpaceId: detection.space.id,
+            spaceUuid: detection.space.uuid,
+            codexWindowsInSpace: detection.codexWindowsInSpace,
+            detectedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(payload) {
+            try? data.write(to: lastDetectionURL)
+        }
+    }
+
+    static func loadLastDetection() -> LastDetection? {
+        guard let data = try? Data(contentsOf: lastDetectionURL) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(LastDetection.self, from: data)
     }
 
     static func clearState() {
@@ -348,6 +392,7 @@ enum SpaceGuardCore {
         let result = detectCurrentThreadResult(threadId: threadId)
         switch result {
         case .success(let detection):
+            saveLastDetection(detection)
             return (formatDetection(detection), 0)
         case .failure(let error):
             return (error.message, 1)
@@ -405,36 +450,37 @@ enum SpaceGuardCore {
     }
 
     static func userFacingCurrentThreadLines() -> [String] {
-        switch detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
-        case .success(let detection):
+        if let detection = loadLastDetection() {
             return [
-                "状態: 自動検出 \(detection.confidence == "high" ? "✓" : "△")",
-                "作業場所: \(spaceLabel(detection.space))",
-                "Codexウィンドウ: #\(detection.window.id)",
+                "状態: 検出済み \(detection.confidence == "high" ? "✓" : "△")",
+                "作業場所: \(detection.desktopIndex.map { "デスクトップ\($0)" } ?? "Space \(detection.internalSpaceId.map(String.init) ?? "?")")",
+                "Codexウィンドウ: #\(detection.cgWindowId)",
                 "同じデスクトップのCodex数: \(detection.codexWindowsInSpace)",
+                "検出日時: \(detection.detectedAt)",
             ]
-        case .failure(let error):
+        } else {
             return [
-                "状態: 自動検出できません",
-                error.message,
+                "状態: 未検出",
+                "Codex側で spaceguard --cli detect-current-thread を実行してください",
             ]
         }
     }
 
     static func windowsForCurrentThreadText() -> String {
-        switch detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
-        case .success(let detection):
-            let windows = loadWindows()
-            var lines = ["\(spaceLabel(detection.space))のウィンドウ"]
-            for id in detection.space.windows {
+        guard let detection = loadLastDetection() else {
+            return "現在スレッドの作業場所はまだ検出されていません"
+        }
+        guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
+            return "最後に検出したデスクトップが見つかりません"
+        }
+        let windows = loadWindows()
+        var lines = ["\(spaceLabel(space))のウィンドウ"]
+        for id in space.windows {
                 if let window = windows[id], window.layer == 0, window.width > 20, window.height > 20 {
                     lines.append(displayName(window))
                 }
-            }
-            return lines.joined(separator: "\n")
-        case .failure:
-            return "現在スレッドの作業場所を検出できません"
         }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -458,10 +504,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refresh() {
-        switch SpaceGuardCore.detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
-        case .success(let detection):
-            statusItem.button?.title = "SG:\(SpaceGuardCore.spaceLabel(detection.space)) \(detection.confidence == "high" ? "✓" : "△")"
-        case .failure:
+        if let detection = SpaceGuardCore.loadLastDetection() {
+            let desktop = detection.desktopIndex.map { "デスクトップ\($0)" } ?? "S\(detection.internalSpaceId.map(String.init) ?? "?")"
+            statusItem.button?.title = "SG:\(desktop) \(detection.confidence == "high" ? "✓" : "△")"
+        } else {
             let status = SpaceGuardCore.statusText()
             if status.hasPrefix("UNBOUND") {
                 statusItem.button?.title = "SG:未検出"
