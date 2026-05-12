@@ -37,6 +37,19 @@ struct RectInfo {
     let height: Double
 }
 
+struct DetectionResult {
+    let confidence: String
+    let threadId: String
+    let electronWindowId: String?
+    let window: WindowInfo
+    let space: SpaceInfo
+    let codexWindowsInSpace: Int
+}
+
+struct DetectionError: Error {
+    let message: String
+}
+
 enum SpaceGuardCore {
     static func loadSpaces() -> [SpaceInfo] {
         let task = Process()
@@ -332,11 +345,21 @@ enum SpaceGuardCore {
     }
 
     static func detectCurrentThread(threadId: String?) -> (String, Int32) {
+        let result = detectCurrentThreadResult(threadId: threadId)
+        switch result {
+        case .success(let detection):
+            return (formatDetection(detection), 0)
+        case .failure(let error):
+            return (error.message, 1)
+        }
+    }
+
+    static func detectCurrentThreadResult(threadId: String?) -> Result<DetectionResult, DetectionError> {
         guard let threadId, !threadId.isEmpty else {
-            return ("NG CODEX_THREAD_ID is missing", 1)
+            return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
         }
         guard let rect = codexMainWindowRect() else {
-            return ("NG Codex AX main window not found for thread=\(threadId)", 1)
+            return .failure(DetectionError(message: "NG Codex AX main window not found for thread=\(threadId)"))
         }
 
         let spaces = loadSpaces()
@@ -351,10 +374,10 @@ enum SpaceGuardCore {
         }
 
         guard candidates.count == 1, let window = candidates.first else {
-            return ("NG expected 1 Codex CGWindow match, got \(candidates.count) for AX rect x=\(rect.x) y=\(rect.y) w=\(rect.width) h=\(rect.height)", 1)
+            return .failure(DetectionError(message: "NG expected 1 Codex CGWindow match, got \(candidates.count) for AX rect x=\(rect.x) y=\(rect.y) w=\(rect.width) h=\(rect.height)"))
         }
         guard let space = spaces.first(where: { $0.windows.contains(window.id) }) else {
-            return ("NG matched \(displayName(window)) but no Space contains it", 1)
+            return .failure(DetectionError(message: "NG matched \(displayName(window)) but no Space contains it"))
         }
 
         let electronId = latestCodexElectronWindowId(threadId: threadId)
@@ -362,11 +385,56 @@ enum SpaceGuardCore {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
         let confidence = electronId == nil ? "medium" : "high"
+        return .success(DetectionResult(
+            confidence: confidence,
+            threadId: threadId,
+            electronWindowId: electronId,
+            window: window,
+            space: space,
+            codexWindowsInSpace: codexCountInSpace
+        ))
+    }
+
+    static func formatDetection(_ detection: DetectionResult) -> String {
+        let space = detection.space
         return ("""
-        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId ?? "?") cgWindowId=\(window.id) desktop=\(space.desktopIndex.map(String.init) ?? "?") internalSpace=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
-        \(displayName(window))
-        codexWindowsInSpace=\(codexCountInSpace)
-        """, 0)
+        OK confidence=\(detection.confidence) thread=\(detection.threadId) electronWindowId=\(detection.electronWindowId ?? "?") cgWindowId=\(detection.window.id) desktop=\(space.desktopIndex.map(String.init) ?? "?") internalSpace=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
+        \(displayName(detection.window))
+        codexWindowsInSpace=\(detection.codexWindowsInSpace)
+        """)
+    }
+
+    static func userFacingCurrentThreadLines() -> [String] {
+        switch detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
+        case .success(let detection):
+            return [
+                "状態: 自動検出 \(detection.confidence == "high" ? "✓" : "△")",
+                "作業場所: \(spaceLabel(detection.space))",
+                "Codexウィンドウ: #\(detection.window.id)",
+                "同じデスクトップのCodex数: \(detection.codexWindowsInSpace)",
+            ]
+        case .failure(let error):
+            return [
+                "状態: 自動検出できません",
+                error.message,
+            ]
+        }
+    }
+
+    static func windowsForCurrentThreadText() -> String {
+        switch detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
+        case .success(let detection):
+            let windows = loadWindows()
+            var lines = ["\(spaceLabel(detection.space))のウィンドウ"]
+            for id in detection.space.windows {
+                if let window = windows[id], window.layer == 0, window.width > 20, window.height > 20 {
+                    lines.append(displayName(window))
+                }
+            }
+            return lines.joined(separator: "\n")
+        case .failure:
+            return "現在スレッドの作業場所を検出できません"
+        }
     }
 }
 
@@ -390,15 +458,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refresh() {
-        let status = SpaceGuardCore.statusText()
-        if status.hasPrefix("UNBOUND") {
-            statusItem.button?.title = "SpaceGuard:unbound"
-        } else if status.hasPrefix("STALE") {
-            statusItem.button?.title = "SpaceGuard:stale"
-        } else {
-            let desktop = status.range(of: #"デスクトップ[0-9]+"#, options: .regularExpression).map { String(status[$0]) }
-            let internalSpace = status.range(of: #"internalSpace=([^\s]+)"#, options: .regularExpression).map { String(status[$0]).replacingOccurrences(of: "internalSpace=", with: "") } ?? "?"
-            statusItem.button?.title = "SpaceGuard:\(desktop ?? "S\(internalSpace)")"
+        switch SpaceGuardCore.detectCurrentThreadResult(threadId: ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]) {
+        case .success(let detection):
+            statusItem.button?.title = "SG:\(SpaceGuardCore.spaceLabel(detection.space)) \(detection.confidence == "high" ? "✓" : "△")"
+        case .failure:
+            let status = SpaceGuardCore.statusText()
+            if status.hasPrefix("UNBOUND") {
+                statusItem.button?.title = "SG:未検出"
+            } else if status.hasPrefix("STALE") {
+                statusItem.button?.title = "SG:要確認"
+            } else {
+                let desktop = status.range(of: #"デスクトップ[0-9]+"#, options: .regularExpression).map { String(status[$0]) }
+                let internalSpace = status.range(of: #"internalSpace=([^\s]+)"#, options: .regularExpression).map { String(status[$0]).replacingOccurrences(of: "internalSpace=", with: "") } ?? "?"
+                statusItem.button?.title = "SG:\(desktop ?? "S\(internalSpace)")"
+            }
         }
         statusItem.menu = makeMenu()
     }
@@ -406,26 +479,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(disabled("SpaceGuard"))
-        menu.addItem(disabled("メニューバー表示はbind済みの作業Spaceです"))
+        menu.addItem(disabled("Codex操作を同じデスクトップ内に閉じ込める"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("Bound Space"))
-        for line in SpaceGuardCore.statusText().split(separator: "\n") {
+        menu.addItem(disabled("このスレッドの作業場所"))
+        for line in SpaceGuardCore.userFacingCurrentThreadLines() {
             menu.addItem(disabled(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("Windows in Bound Space"))
-        for line in SpaceGuardCore.windowsText().split(separator: "\n") {
+        menu.addItem(disabled("操作対象になる同じデスクトップのウィンドウ"))
+        for line in SpaceGuardCore.windowsForCurrentThreadText().split(separator: "\n") {
             menu.addItem(disabled(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("All Known Spaces"))
+        menu.addItem(disabled("全デスクトップの要約"))
         for line in SpaceGuardCore.allSpacesText().split(separator: "\n") {
             menu.addItem(disabled(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(action("Bind Codex Window", #selector(bindCodex)))
-        menu.addItem(action("Refresh", #selector(refreshAction)))
-        menu.addItem(action("Clear Bind", #selector(clearBind)))
+        menu.addItem(action("再検出", #selector(refreshAction)))
+        menu.addItem(action("手動で現在のCodexウィンドウを固定", #selector(bindCodex)))
+        menu.addItem(action("手動固定を解除", #selector(clearBind)))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(action("Quit SpaceGuard", #selector(quit)))
         return menu
