@@ -26,6 +26,7 @@ struct WindowInfo {
 struct SpaceInfo {
     let uuid: String
     let id: Int?
+    let desktopIndex: Int?
     let windows: [Int]
 }
 
@@ -63,15 +64,17 @@ enum SpaceGuardCore {
         }
 
         var idsByUuid: [String: Int] = [:]
+        var desktopIndexesByUuid: [String: Int] = [:]
         if
             let managementData = config["Management Data"] as? [String: Any],
             let monitors = managementData["Monitors"] as? [[String: Any]]
         {
             for monitor in monitors {
                 if let spaces = monitor["Spaces"] as? [[String: Any]] {
-                    for space in spaces {
+                    for (index, space) in spaces.enumerated() {
                         if let uuid = space["uuid"] as? String {
                             idsByUuid[uuid] = space["ManagedSpaceID"] as? Int
+                            desktopIndexesByUuid[uuid] = index + 1
                         }
                     }
                 }
@@ -101,6 +104,7 @@ enum SpaceGuardCore {
             return SpaceInfo(
                 uuid: uuid,
                 id: idsByUuid[uuid],
+                desktopIndex: desktopIndexesByUuid[uuid],
                 windows: property["windows"] as? [Int] ?? []
             )
         }
@@ -165,6 +169,20 @@ enum SpaceGuardCore {
         return "\(window.owner) #\(window.id) - \(title)"
     }
 
+    static func spaceLabel(_ space: SpaceInfo) -> String {
+        if let desktopIndex = space.desktopIndex {
+            return "デスクトップ\(desktopIndex)"
+        }
+        return "Space \(space.id.map(String.init) ?? "?")"
+    }
+
+    static func stateSpaceLabel(spaceId: Int?, uuid: String) -> String {
+        if let space = loadSpaces().first(where: { $0.uuid == uuid }) {
+            return spaceLabel(space)
+        }
+        return "Space \(spaceId.map(String.init) ?? "?")"
+    }
+
     static func bindCodex() -> String {
         let spaces = loadSpaces()
         let windows = loadWindows()
@@ -194,7 +212,7 @@ enum SpaceGuardCore {
             boundAt: ISO8601DateFormatter().string(from: Date())
         )
         saveState(state)
-        return "OK bound \(displayName(selected.1)) space=\(selected.0.id.map(String.init) ?? "?")"
+        return "OK bound \(displayName(selected.1)) \(spaceLabel(selected.0)) internalSpace=\(selected.0.id.map(String.init) ?? "?")"
     }
 
     static func statusText() -> String {
@@ -205,7 +223,7 @@ enum SpaceGuardCore {
         let windows = loadWindows()
         let space = boundSpace(spaces: spaces, state: state)
         let stale = space?.windows.contains(state.windowId) == true ? "OK" : "STALE"
-        var lines = ["\(stale) space=\(state.spaceId.map(String.init) ?? "?") uuid=\(state.spaceUuid) window=\(state.windowId) boundAt=\(state.boundAt)"]
+        var lines = ["\(stale) \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid)) internalSpace=\(state.spaceId.map(String.init) ?? "?") uuid=\(state.spaceUuid) window=\(state.windowId) boundAt=\(state.boundAt)"]
         if let window = windows[state.windowId] {
             lines.append(displayName(window))
         }
@@ -217,7 +235,7 @@ enum SpaceGuardCore {
             return "UNBOUND"
         }
         let windows = loadWindows()
-        var lines = ["Space \(space.id.map(String.init) ?? "?") \(space.uuid)"]
+        var lines = ["\(spaceLabel(space)) internalSpace=\(space.id.map(String.init) ?? "?") \(space.uuid)"]
         for id in space.windows {
             if let window = windows[id], window.layer == 0 {
                 lines.append(displayName(window))
@@ -238,7 +256,7 @@ enum SpaceGuardCore {
             let marker = state?.spaceUuid == space.uuid ? "*" : " "
             let visibleWindows = space.windows.compactMap { windows[$0] }.filter { $0.layer == 0 }
             let apps = Array(Set(visibleWindows.map(\.owner))).sorted().joined(separator: ", ")
-            return "\(marker) Space \(space.id.map(String.init) ?? "?") windows=\(visibleWindows.count) \(apps)"
+            return "\(marker) \(spaceLabel(space)) internalSpace=\(space.id.map(String.init) ?? "?") windows=\(visibleWindows.count) \(apps)"
         }.joined(separator: "\n")
     }
 
@@ -251,9 +269,9 @@ enum SpaceGuardCore {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
         if matches.isEmpty {
-            return ("NG no \(app) window in bound space \(state.spaceId.map(String.init) ?? "?")", 1)
+            return ("NG no \(app) window in \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid))", 1)
         }
-        return (["OK \(matches.count) \(app) window(s) in bound space \(state.spaceId.map(String.init) ?? "?")"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
+        return (["OK \(matches.count) \(app) window(s) in \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid))"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
     }
 
     static func codexMainWindowRect() -> RectInfo? {
@@ -345,7 +363,7 @@ enum SpaceGuardCore {
         }.count
         let confidence = electronId == nil ? "medium" : "high"
         return ("""
-        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId ?? "?") cgWindowId=\(window.id) space=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
+        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId ?? "?") cgWindowId=\(window.id) desktop=\(space.desktopIndex.map(String.init) ?? "?") internalSpace=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
         \(displayName(window))
         codexWindowsInSpace=\(codexCountInSpace)
         """, 0)
@@ -378,8 +396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if status.hasPrefix("STALE") {
             statusItem.button?.title = "SpaceGuard:stale"
         } else {
-            let space = status.range(of: #"space=([^\s]+)"#, options: .regularExpression).map { String(status[$0]).replacingOccurrences(of: "space=", with: "") } ?? "?"
-            statusItem.button?.title = "SpaceGuard:S\(space)"
+            let desktop = status.range(of: #"デスクトップ[0-9]+"#, options: .regularExpression).map { String(status[$0]) }
+            let internalSpace = status.range(of: #"internalSpace=([^\s]+)"#, options: .regularExpression).map { String(status[$0]).replacingOccurrences(of: "internalSpace=", with: "") } ?? "?"
+            statusItem.button?.title = "SpaceGuard:\(desktop ?? "S\(internalSpace)")"
         }
         statusItem.menu = makeMenu()
     }
