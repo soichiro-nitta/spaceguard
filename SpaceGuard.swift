@@ -17,6 +17,8 @@ struct WindowInfo {
     let owner: String
     let title: String
     let layer: Int
+    let x: Double
+    let y: Double
     let width: Double
     let height: Double
 }
@@ -25,6 +27,13 @@ struct SpaceInfo {
     let uuid: String
     let id: Int?
     let windows: [Int]
+}
+
+struct RectInfo {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
 }
 
 enum SpaceGuardCore {
@@ -114,6 +123,8 @@ enum SpaceGuardCore {
                 owner: owner,
                 title: title,
                 layer: layer,
+                x: bounds["X"] as? Double ?? 0,
+                y: bounds["Y"] as? Double ?? 0,
                 width: bounds["Width"] as? Double ?? 0,
                 height: bounds["Height"] as? Double ?? 0
             )
@@ -244,6 +255,101 @@ enum SpaceGuardCore {
         }
         return (["OK \(matches.count) \(app) window(s) in bound space \(state.spaceId.map(String.init) ?? "?")"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
     }
+
+    static func codexMainWindowRect() -> RectInfo? {
+        let script = """
+        tell application "System Events"
+          tell process "Codex"
+            repeat with w in windows
+              try
+                if (value of attribute "AXMain" of w) is true then
+                  set p to position of w
+                  set s to size of w
+                  return (item 1 of p as text) & "," & (item 2 of p as text) & "," & (item 1 of s as text) & "," & (item 2 of s as text)
+                end if
+              end try
+            end repeat
+          end tell
+        end tell
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let parts = output.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else {
+            return nil
+        }
+        return RectInfo(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+    }
+
+    static func latestCodexElectronWindowId(threadId: String) -> String? {
+        let path = "\(NSHomeDirectory())/Library/Application Support/Codex/sentry/scope_v3.json"
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return nil
+        }
+        let pattern = #"conversationId=\#(NSRegularExpression.escapedPattern(for: threadId)).*?windowId=([0-9]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = regex.matches(in: text, options: [], range: range)
+        guard let match = matches.last, let idRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[idRange])
+    }
+
+    static func detectCurrentThread(threadId: String?) -> (String, Int32) {
+        guard let threadId, !threadId.isEmpty else {
+            return ("NG CODEX_THREAD_ID is missing", 1)
+        }
+        guard let rect = codexMainWindowRect() else {
+            return ("NG Codex AX main window not found for thread=\(threadId)", 1)
+        }
+
+        let spaces = loadSpaces()
+        let windows = loadWindows()
+        let candidates = windows.values.filter {
+            $0.owner == "Codex"
+                && $0.layer == 0
+                && abs($0.x - rect.x) < 2
+                && abs($0.y - rect.y) < 2
+                && abs($0.width - rect.width) < 2
+                && abs($0.height - rect.height) < 2
+        }
+
+        guard candidates.count == 1, let window = candidates.first else {
+            return ("NG expected 1 Codex CGWindow match, got \(candidates.count) for AX rect x=\(rect.x) y=\(rect.y) w=\(rect.width) h=\(rect.height)", 1)
+        }
+        guard let space = spaces.first(where: { $0.windows.contains(window.id) }) else {
+            return ("NG matched \(displayName(window)) but no Space contains it", 1)
+        }
+
+        let electronId = latestCodexElectronWindowId(threadId: threadId) ?? "?"
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        let confidence = codexCountInSpace == 1 ? "high" : "medium"
+        return ("""
+        OK confidence=\(confidence) thread=\(threadId) electronWindowId=\(electronId) cgWindowId=\(window.id) space=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
+        \(displayName(window))
+        codexWindowsInSpace=\(codexCountInSpace)
+        """, 0)
+    }
 }
 
 extension String {
@@ -346,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard bind|status|windows|assert --app <name>|clear")
+        print("usage: spaceguard bind|status|windows|detect-current-thread|assert --app <name>|clear")
         exit(2)
     }
 
@@ -357,6 +463,17 @@ func runCLI(arguments: [String]) {
         print(SpaceGuardCore.statusText())
     case "windows":
         print(SpaceGuardCore.windowsText())
+    case "detect-current-thread":
+        var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
+        if
+            let index = arguments.firstIndex(of: "--thread-id"),
+            arguments.indices.contains(index + 1)
+        {
+            threadId = arguments[index + 1]
+        }
+        let result = SpaceGuardCore.detectCurrentThread(threadId: threadId)
+        print(result.0)
+        exit(result.1)
     case "assert":
         guard
             let appIndex = arguments.firstIndex(of: "--app"),
@@ -372,7 +489,7 @@ func runCLI(arguments: [String]) {
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard bind|status|windows|assert --app <name>|clear")
+        print("usage: spaceguard bind|status|windows|detect-current-thread|assert --app <name>|clear")
         exit(2)
     }
 }
