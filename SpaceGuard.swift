@@ -215,6 +215,22 @@ enum SpaceGuardCore {
         return lines.joined(separator: "\n")
     }
 
+    static func allSpacesText() -> String {
+        let spaces = loadSpaces()
+        let windows = loadWindows()
+        let state = loadState()
+        if spaces.isEmpty {
+            return "No Spaces found"
+        }
+
+        return spaces.map { space in
+            let marker = state?.spaceUuid == space.uuid ? "*" : " "
+            let visibleWindows = space.windows.compactMap { windows[$0] }.filter { $0.layer == 0 }
+            let apps = Array(Set(visibleWindows.map(\.owner))).sorted().joined(separator: ", ")
+            return "\(marker) Space \(space.id.map(String.init) ?? "?") windows=\(visibleWindows.count) \(apps)"
+        }.joined(separator: "\n")
+    }
+
     static func assertText(app: String) -> (String, Int32) {
         guard let state = loadState(), let space = boundSpace(spaces: loadSpaces(), state: state) else {
             return ("NG unbound", 1)
@@ -252,12 +268,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refresh() {
         let status = SpaceGuardCore.statusText()
         if status.hasPrefix("UNBOUND") {
-            statusItem.button?.title = "SG:unbound"
+            statusItem.button?.title = "SpaceGuard:unbound"
         } else if status.hasPrefix("STALE") {
-            statusItem.button?.title = "SG:stale"
+            statusItem.button?.title = "SpaceGuard:stale"
         } else {
             let space = status.range(of: #"space=([^\s]+)"#, options: .regularExpression).map { String(status[$0]).replacingOccurrences(of: "space=", with: "") } ?? "?"
-            statusItem.button?.title = "SG:S\(space)"
+            statusItem.button?.title = "SpaceGuard:S\(space)"
         }
         statusItem.menu = makeMenu()
     }
@@ -265,13 +281,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(disabled("SpaceGuard"))
+        menu.addItem(disabled("メニューバー表示はbind済みの作業Spaceです"))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(disabled("Bound Space"))
         for line in SpaceGuardCore.statusText().split(separator: "\n") {
             menu.addItem(disabled(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(disabled("Windows in Bound Space"))
         for line in SpaceGuardCore.windowsText().split(separator: "\n") {
+            menu.addItem(disabled(String(line)))
+        }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(disabled("All Known Spaces"))
+        for line in SpaceGuardCore.allSpacesText().split(separator: "\n") {
             menu.addItem(disabled(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
@@ -364,4 +387,3 @@ if arguments.first == "--cli" {
     app.setActivationPolicy(.accessory)
     app.run()
 }
-
