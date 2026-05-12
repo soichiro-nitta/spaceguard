@@ -444,7 +444,14 @@ enum SpaceGuardCore {
 
         do {
             try task.run()
-            task.waitUntilExit()
+            let semaphore = DispatchSemaphore(value: 0)
+            task.terminationHandler = { _ in
+                semaphore.signal()
+            }
+            if semaphore.wait(timeout: .now() + 3) == .timedOut {
+                task.terminate()
+                return nil
+            }
         } catch {
             return nil
         }
