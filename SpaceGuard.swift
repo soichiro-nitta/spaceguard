@@ -402,17 +402,20 @@ enum SpaceGuardCore {
     }
 
     static func assertText(app: String) -> (String, Int32) {
-        guard let state = loadState(), let space = boundSpace(spaces: loadSpaces(), state: state) else {
-            return ("NG unbound", 1)
+        guard let detection = loadLastDetection() else {
+            return ("NG current thread has not been detected yet", 1)
+        }
+        guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
+            return ("NG last detected Space was not found", 1)
         }
         let windows = loadWindows()
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
         if matches.isEmpty {
-            return ("NG no \(app) window in \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid))", 1)
+            return ("NG no \(app) window in \(spaceLabel(space))", 1)
         }
-        return (["OK \(matches.count) \(app) window(s) in \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid))"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
+        return (["OK \(matches.count) \(app) window(s) in \(spaceLabel(space))"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
     }
 
     static func codexMainWindowRect() -> RectInfo? {

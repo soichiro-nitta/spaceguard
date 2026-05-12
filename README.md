@@ -22,10 +22,10 @@ The Homebrew formula lives in [`soichiro-nitta/homebrew-tap`](https://github.com
 ```sh
 git clone https://github.com/soichiro-nitta/spaceguard.git
 cd spaceguard
-./build.sh
+./install.sh
 ```
 
-`build.sh` compiles the binary, creates `build/SpaceGuard.app`, and symlinks the CLI to `~/.local/bin/spaceguard`.
+`install.sh` compiles the CLI to `~/.local/bin/spaceguard`. `build.sh` additionally creates `build/SpaceGuard.app` for the optional menu bar helper.
 
 ## First run
 
