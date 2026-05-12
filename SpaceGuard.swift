@@ -226,6 +226,13 @@ enum SpaceGuardCore {
         return "\(window.owner) #\(window.id) - \(title)"
     }
 
+    static func userDisplayName(_ window: WindowInfo) -> String {
+        if window.title.isEmpty {
+            return "\(window.owner) #\(window.id)"
+        }
+        return "\(window.owner) #\(window.id) - \(window.title)"
+    }
+
     static func spaceLabel(_ space: SpaceInfo) -> String {
         if let desktopIndex = space.desktopIndex {
             return "デスクトップ\(desktopIndex)"
@@ -313,7 +320,7 @@ enum SpaceGuardCore {
             let marker = state?.spaceUuid == space.uuid ? "*" : " "
             let visibleWindows = space.windows.compactMap { windows[$0] }.filter { $0.layer == 0 }
             let apps = Array(Set(visibleWindows.map(\.owner))).sorted().joined(separator: ", ")
-            return "\(marker) \(spaceLabel(space)) internalSpace=\(space.id.map(String.init) ?? "?") windows=\(visibleWindows.count) \(apps)"
+            return "\(marker) \(spaceLabel(space)) windows=\(visibleWindows.count) \(apps)"
         }.joined(separator: "\n")
     }
 
@@ -451,13 +458,16 @@ enum SpaceGuardCore {
 
     static func userFacingCurrentThreadLines() -> [String] {
         if let detection = loadLastDetection() {
-            return [
+            var lines = [
                 "状態: 検出済み \(detection.confidence == "high" ? "✓" : "△")",
                 "作業場所: \(detection.desktopIndex.map { "デスクトップ\($0)" } ?? "Space \(detection.internalSpaceId.map(String.init) ?? "?")")",
                 "Codexウィンドウ: #\(detection.cgWindowId)",
-                "同じデスクトップのCodex数: \(detection.codexWindowsInSpace)",
                 "検出日時: \(detection.detectedAt)",
             ]
+            if detection.codexWindowsInSpace > 1 {
+                lines.append("注意: 同じデスクトップにCodexが\(detection.codexWindowsInSpace)つあります")
+            }
+            return lines
         } else {
             return [
                 "状態: 未検出",
@@ -476,9 +486,9 @@ enum SpaceGuardCore {
         let windows = loadWindows()
         var lines = ["\(spaceLabel(space))のウィンドウ"]
         for id in space.windows {
-                if let window = windows[id], window.layer == 0, window.width > 20, window.height > 20 {
-                    lines.append(displayName(window))
-                }
+            if let window = windows[id], window.layer == 0, window.width > 20, window.height > 20 {
+                lines.append(userDisplayName(window))
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -524,25 +534,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(disabled("SpaceGuard"))
-        menu.addItem(disabled("Codex操作を同じデスクトップ内に閉じ込める"))
+        menu.addItem(header("SpaceGuard"))
+        menu.addItem(label("Codex操作を同じデスクトップ内に閉じ込める"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("このスレッドの作業場所"))
+        menu.addItem(header("このスレッドの作業場所"))
         for line in SpaceGuardCore.userFacingCurrentThreadLines() {
-            menu.addItem(disabled(String(line)))
+            menu.addItem(label(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("操作対象になる同じデスクトップのウィンドウ"))
+        menu.addItem(header("操作対象になる同じデスクトップのウィンドウ"))
         for line in SpaceGuardCore.windowsForCurrentThreadText().split(separator: "\n") {
-            menu.addItem(disabled(String(line)))
+            menu.addItem(label(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(disabled("全デスクトップの要約"))
+        menu.addItem(header("全デスクトップの要約"))
         for line in SpaceGuardCore.allSpacesText().split(separator: "\n") {
-            menu.addItem(disabled(String(line)))
+            menu.addItem(label(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(action("再検出", #selector(refreshAction)))
+        menu.addItem(action("表示を更新", #selector(refreshAction)))
         menu.addItem(action("手動で現在のCodexウィンドウを固定", #selector(bindCodex)))
         menu.addItem(action("手動固定を解除", #selector(clearBind)))
         menu.addItem(NSMenuItem.separator())
@@ -550,9 +560,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    private func disabled(_ title: String) -> NSMenuItem {
+    private func header(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
+        return item
+    }
+
+    private func label(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = true
         return item
     }
 
