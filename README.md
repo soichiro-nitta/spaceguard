@@ -19,6 +19,14 @@ The Homebrew formula lives in [`soichiro-nitta/homebrew-tap`](https://github.com
 
 ### Local development install
 
+One-line install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/soichiro-nitta/spaceguard/main/install.sh | zsh
+```
+
+From a clone:
+
 ```sh
 git clone https://github.com/soichiro-nitta/spaceguard.git
 cd spaceguard
