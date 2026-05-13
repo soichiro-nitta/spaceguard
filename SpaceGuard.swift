@@ -15,6 +15,7 @@ let lastDetectionURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/last-detection.json")
 let pluginInstallURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent("plugins/spaceguard")
+let pluginSkillName = "spaceguard-safe-desktop-operation"
 let marketplaceURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".agents/plugins/marketplace.json")
 let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
@@ -1124,6 +1125,7 @@ enum SpaceGuardCore {
     static func setupCodex(options: SetupCodexOptions) -> Int32 {
         print("SpaceGuard Codex setup")
         print("Plugin path: \(pluginInstallURL.path)")
+        print("Skill path: \(pluginInstallURL.appendingPathComponent("skills/\(pluginSkillName)/SKILL.md").path)")
         print("Marketplace: \(marketplaceURL.path)")
         if options.withAgentsRule {
             print("Codex rules: \(codexAgentsURL.path)")
@@ -1176,7 +1178,7 @@ enum SpaceGuardCore {
         if options.dryRun {
             print("Dry run complete. No files were changed.")
         } else {
-            print("Setup complete. Restart Codex if the plugin does not appear immediately.")
+            print("Setup complete. Restart Codex if the plugin or \(pluginSkillName) skill does not appear immediately.")
         }
         return 0
     }

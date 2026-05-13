@@ -81,7 +81,9 @@ Codexへプラグイン登録するには、以下を実行します。
 spaceguard setup-codex
 ```
 
-これは`~/plugins/spaceguard`へプラグインを配置し、`~/.agents/plugins/marketplace.json`へ登録します。個人ルールの`~/.codex/AGENTS.md`は編集しません。
+これは`~/plugins/spaceguard`へプラグインを配置し、`~/.agents/plugins/marketplace.json`へ登録します。SpaceGuardの横断スキル`spaceguard-safe-desktop-operation`も、このプラグイン内の`skills/`から配布されます。個人ルールの`~/.codex/AGENTS.md`は編集しません。
+
+SpaceGuardに関するChrome、Computer Use、macOS Desktop/Space判定の手順は、このrepoのCLIと同梱スキルを正本にします。特定プロジェクトのops repositoryへSpaceGuardの詳細手順を複製せず、プロジェクト側には対象アプリ、ログインロール、確認対象URLのようなドメイン固有情報だけを置きます。
 
 変更予定だけ確認したい場合:
 
