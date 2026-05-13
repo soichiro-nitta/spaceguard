@@ -664,9 +664,8 @@ enum SpaceGuardCore {
         let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
-        let confidence = electronId == nil ? "medium" : "high"
         return .success(DetectionResult(
-            confidence: confidence,
+            confidence: "high",
             threadId: threadId,
             threadName: currentThreadName(threadId: threadId),
             electronWindowId: electronId,
