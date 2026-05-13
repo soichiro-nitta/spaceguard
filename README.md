@@ -164,7 +164,7 @@ spaceguard bind --desktop 3
 ```md
 Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGuard plugin workflow.
 
-If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
+If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high`, `cached-high`, or `fallback-active-space`.
 
 When opening a new Chrome URL, do not use the Codex Chrome Extension `tabs.new()` as the first step because it may create a tab in a Chrome window from another macOS Space. Use `spaceguard open-url --app "Google Chrome" <url>` first. It opens a background tab by default; use `--activate` only when the target Chrome window should be brought forward.
 

@@ -21,12 +21,12 @@ brew install --HEAD spaceguard
 ## Required Flow
 
 1. Run `spaceguard detect --json`.
-2. Continue only when the JSON has `ok: true` and `confidence` is `high` or `cached-high`.
+2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `cached-high`, or `fallback-active-space`.
 3. Treat `space.desktopName` as the only target Desktop/Space for this turn.
 4. State the detected Desktop and confidence briefly before using Chrome or Computer Use.
 5. Before operating a named app when practical, run `spaceguard assert --app "<App Name>"`.
 6. If detection fails, confidence is lower, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
-7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result is returned for the same thread.
+7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
 8. If the user explicitly says which Desktop contains the current Codex thread, run `spaceguard bind --desktop <n>` and treat that manual binding as the target for this turn.
 
 ## Operating Rules

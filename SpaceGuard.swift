@@ -114,6 +114,11 @@ struct SpaceInfo {
     let windows: [Int]
 }
 
+struct SpacesSnapshot {
+    let spaces: [SpaceInfo]
+    let activeSpaceUuids: Set<String>
+}
+
 struct RectInfo {
     let x: Double
     let y: Double
@@ -150,6 +155,10 @@ struct LastDetection: Codable {
 
 enum SpaceGuardCore {
     static func loadSpaces() -> [SpaceInfo] {
+        loadSpacesSnapshot().spaces
+    }
+
+    static func loadSpacesSnapshot() -> SpacesSnapshot {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
         task.arguments = ["export", "com.apple.spaces", "-"]
@@ -162,7 +171,7 @@ enum SpaceGuardCore {
             try task.run()
             task.waitUntilExit()
         } catch {
-            return []
+            return SpacesSnapshot(spaces: [], activeSpaceUuids: [])
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -171,11 +180,12 @@ enum SpaceGuardCore {
             let root = plist as? [String: Any],
             let config = root["SpacesDisplayConfiguration"] as? [String: Any]
         else {
-            return []
+            return SpacesSnapshot(spaces: [], activeSpaceUuids: [])
         }
 
         var idsByUuid: [String: Int] = [:]
         var desktopIndexesByUuid: [String: Int] = [:]
+        var activeSpaceUuids = Set<String>()
         if
             let managementData = config["Management Data"] as? [String: Any],
             let monitors = managementData["Monitors"] as? [[String: Any]]
@@ -194,6 +204,7 @@ enum SpaceGuardCore {
                     let uuid = current["uuid"] as? String
                 {
                     idsByUuid[uuid] = current["ManagedSpaceID"] as? Int
+                    activeSpaceUuids.insert(uuid)
                 }
                 if
                     let collapsed = monitor["Collapsed Space"] as? [String: Any],
@@ -205,10 +216,10 @@ enum SpaceGuardCore {
         }
 
         guard let properties = config["Space Properties"] as? [[String: Any]] else {
-            return []
+            return SpacesSnapshot(spaces: [], activeSpaceUuids: activeSpaceUuids)
         }
 
-        return properties.compactMap { property in
+        let spaces: [SpaceInfo] = properties.compactMap { property in
             guard let uuid = property["name"] as? String else {
                 return nil
             }
@@ -219,6 +230,7 @@ enum SpaceGuardCore {
                 windows: property["windows"] as? [Int] ?? []
             )
         }
+        return SpacesSnapshot(spaces: spaces, activeSpaceUuids: activeSpaceUuids)
     }
 
     static func loadWindows() -> [Int: WindowInfo] {
@@ -865,18 +877,32 @@ enum SpaceGuardCore {
         guard let threadId, !threadId.isEmpty else {
             return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
         }
-        guard let rect = codexMainWindowRect() else {
-            return .failure(DetectionError(message: "NG Codex AX main window not found for thread=\(threadId)"))
-        }
-
-        let spaces = loadSpaces()
+        let snapshot = loadSpacesSnapshot()
+        let spaces = snapshot.spaces
         let windows = loadWindows()
         let electronId = latestCodexElectronWindowId(threadId: threadId)
         let totalCodexWindows = windows.values.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
         if electronId == nil && totalCodexWindows > 1 {
-            return .failure(DetectionError(message: "NG multiple Codex windows are open and no thread/window hint is available for thread=\(threadId)"))
+            return activeSpaceFallbackDetection(
+                threadId: threadId,
+                threadName: currentThreadName(threadId: threadId),
+                electronId: electronId,
+                snapshot: snapshot,
+                windows: windows,
+                failureReason: "multiple Codex windows are open and no thread/window hint is available"
+            )
+        }
+        guard let rect = codexMainWindowRect() else {
+            return activeSpaceFallbackDetection(
+                threadId: threadId,
+                threadName: currentThreadName(threadId: threadId),
+                electronId: electronId,
+                snapshot: snapshot,
+                windows: windows,
+                failureReason: "Codex AX main window not found"
+            )
         }
         let candidates = windows.values.filter {
             $0.owner == "Codex"
@@ -888,10 +914,24 @@ enum SpaceGuardCore {
         }
 
         guard candidates.count == 1, let window = candidates.first else {
-            return .failure(DetectionError(message: "NG expected 1 Codex CGWindow match, got \(candidates.count) for AX rect x=\(rect.x) y=\(rect.y) w=\(rect.width) h=\(rect.height)"))
+            return activeSpaceFallbackDetection(
+                threadId: threadId,
+                threadName: currentThreadName(threadId: threadId),
+                electronId: electronId,
+                snapshot: snapshot,
+                windows: windows,
+                failureReason: "expected 1 Codex CGWindow match, got \(candidates.count) for AX rect x=\(rect.x) y=\(rect.y) w=\(rect.width) h=\(rect.height)"
+            )
         }
         guard let space = spaces.first(where: { $0.windows.contains(window.id) }) else {
-            return .failure(DetectionError(message: "NG matched \(displayName(window)) but no Space contains it"))
+            return activeSpaceFallbackDetection(
+                threadId: threadId,
+                threadName: currentThreadName(threadId: threadId),
+                electronId: electronId,
+                snapshot: snapshot,
+                windows: windows,
+                failureReason: "matched \(displayName(window)) but no Space contains it"
+            )
         }
 
         let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
@@ -904,6 +944,46 @@ enum SpaceGuardCore {
             electronWindowId: electronId,
             window: window,
             space: space,
+            codexWindowsInSpace: codexCountInSpace
+        ))
+    }
+
+    static func activeSpaceFallbackDetection(
+        threadId: String,
+        threadName: String?,
+        electronId: String?,
+        snapshot: SpacesSnapshot,
+        windows: [Int: WindowInfo],
+        failureReason: String
+    ) -> Result<DetectionResult, DetectionError> {
+        let activeSpaces = snapshot.spaces.filter { snapshot.activeSpaceUuids.contains($0.uuid) }
+        let activeCodexMatches = activeSpaces.flatMap { space in
+            space.windows.compactMap { id -> (SpaceInfo, WindowInfo)? in
+                guard
+                    let window = windows[id],
+                    window.owner == "Codex",
+                    window.layer == 0,
+                    window.width > 200,
+                    window.height > 200
+                else {
+                    return nil
+                }
+                return (space, window)
+            }
+        }
+        guard activeCodexMatches.count == 1, let match = activeCodexMatches.first else {
+            return .failure(DetectionError(message: "NG \(failureReason); active Space Codex fallback expected 1 match, got \(activeCodexMatches.count) for thread=\(threadId)"))
+        }
+        let codexCountInSpace = match.0.windows.compactMap { windows[$0] }.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        return .success(DetectionResult(
+            confidence: "fallback-active-space",
+            threadId: threadId,
+            threadName: threadName,
+            electronWindowId: electronId,
+            window: match.1,
+            space: match.0,
             codexWindowsInSpace: codexCountInSpace
         ))
     }
