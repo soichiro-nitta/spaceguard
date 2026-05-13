@@ -33,7 +33,8 @@ brew install --HEAD spaceguard
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
-- For Chrome URL opening, prefer `spaceguard open-url --app "Google Chrome" <url>` over Codex Chrome Extension `tabs.new()`. The extension may create a new tab in a selected Chrome window from another Space.
+- For Chrome URL opening, prefer `spaceguard open-url --app "Google Chrome" <url>` over Codex Chrome Extension `tabs.new()`. The extension may create a new tab in a selected Chrome window from another Space. `open-url` creates a background tab by default; use `--activate` only when the target Chrome window should be brought forward.
+- To operate a background tab opened by `spaceguard open-url`, list user tabs with `browser.user.openTabs()`, choose the matching URL, and claim it with `browser.user.claimTab(tab)`. Claiming can select the tab in Chrome, so do it only when you are ready to operate that page.
 - Do not run `open-url`, `assert`, or `windows` from a stale detection created by another Codex thread. If SpaceGuard reports a thread mismatch, run `spaceguard detect --json` in the current thread or stop.
 - After opening a Chrome URL, run `spaceguard windows` or `spaceguard assert --app "Google Chrome"` when practical to confirm the target Desktop still contains the Chrome window.
 - If a new non-Chrome window is needed, create it only when you can verify it appears in the detected Space.

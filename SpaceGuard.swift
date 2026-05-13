@@ -518,7 +518,7 @@ enum SpaceGuardCore {
         return (["OK \(matches.count) \(app) window(s) in \(spaceLabel(space))"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
     }
 
-    static func openURLText(app: String, url: String) -> (String, Int32) {
+    static func openURLText(app: String, url: String, activate: Bool) -> (String, Int32) {
         if app != "Google Chrome" {
             return ("NG open-url currently supports only Google Chrome", 1)
         }
@@ -548,10 +548,10 @@ enum SpaceGuardCore {
         guard let window = matches.first else {
             return ("NG no \(app) window in \(spaceLabel(space))", 1)
         }
-        return openChromeURL(window: window, url: url, space: space)
+        return openChromeURL(window: window, url: url, space: space, activate: activate)
     }
 
-    static func openChromeURL(window: WindowInfo, url: String, space: SpaceInfo) -> (String, Int32) {
+    static func openChromeURL(window: WindowInfo, url: String, space: SpaceInfo, activate: Bool) -> (String, Int32) {
         let left = Int(window.x.rounded())
         let top = Int(window.y.rounded())
         let right = Int((window.x + window.width).rounded())
@@ -564,6 +564,7 @@ enum SpaceGuardCore {
           set targetRight to item 4 of argv as integer
           set targetBottom to item 5 of argv as integer
           set targetURL to item 6 of argv
+          set shouldActivate to item 7 of argv is "1"
 
           tell application "Google Chrome"
             repeat with w in windows
@@ -577,8 +578,11 @@ enum SpaceGuardCore {
               set titleMatch to titleText is targetTitle or targetTitle is "" or titleText contains targetTitle or targetTitle contains titleText
               if boundsMatch and titleMatch then
                 make new tab at end of tabs of w with properties {URL:targetURL}
-                set active tab index of w to (count of tabs of w)
-                return "OK opened URL in target Google Chrome window"
+                if shouldActivate then
+                  set active tab index of w to (count of tabs of w)
+                  return "OK opened URL in target Google Chrome window"
+                end if
+                return "OK opened background URL in target Google Chrome window"
               end if
             end repeat
           end tell
@@ -599,7 +603,8 @@ enum SpaceGuardCore {
             String(top),
             String(right),
             String(bottom),
-            url
+            url,
+            activate ? "1" : "0"
         ]
 
         let pipe = Pipe()
@@ -1467,13 +1472,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -1542,10 +1547,14 @@ func runCLI(arguments: [String]) {
             let appIndex = arguments.firstIndex(of: "--app"),
             arguments.indices.contains(appIndex + 2)
         else {
-            print("usage: spaceguard open-url --app \"Google Chrome\" <url>")
+            print("usage: spaceguard open-url [--activate] --app \"Google Chrome\" <url>")
             exit(2)
         }
-        let result = SpaceGuardCore.openURLText(app: arguments[appIndex + 1], url: arguments[appIndex + 2])
+        let result = SpaceGuardCore.openURLText(
+            app: arguments[appIndex + 1],
+            url: arguments[appIndex + 2],
+            activate: arguments.contains("--activate")
+        )
         print(result.0)
         exit(result.1)
     case "setup-codex":
@@ -1564,7 +1573,7 @@ func runCLI(arguments: [String]) {
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
         exit(2)
     }
 }
