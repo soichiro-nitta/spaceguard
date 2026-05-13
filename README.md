@@ -147,7 +147,9 @@ spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spa
 
 `open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。
 
-バックグラウンドタブをCodex Chrome Extensionで続けて操作する場合は、`browser.user.openTabs()`で対象URLのタブを探し、`browser.user.claimTab(tab)`で操作対象にします。`claimTab`後はChrome側でそのタブが選択状態になることがあります。
+バックグラウンドタブをCodex Chrome Extensionで続けて操作する場合は、ユーザーの通常タブを直接触らず、`browser.user.openTabs()`で対象URLのタブを探し、`browser.user.claimTab(tab)`でCodexのagent用タブグループへ移してから操作します。操作後は、ユーザーに残す必要があるタブだけ`browser.tabs.finalize({ keep: [...] })`で残します。
+
+`claimTab`後はChrome側でそのタブが選択状態になることがあります。SpaceGuardはタブ作成時の誤Space選択を減らすための道具であり、実際にCodexがページ操作を始める段階ではChrome側の表示に影響する場合があります。
 
 `open-url`、`assert`、`windows`は、現在の`CODEX_THREAD_ID`と最後の検出結果が一致している場合だけ動きます。別スレッドの検出結果が残っている場合は、その結果を使わず止まります。
 
@@ -167,6 +169,8 @@ Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGua
 If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
 
 When opening a new Chrome URL, do not use the Codex Chrome Extension `tabs.new()` as the first step because it may create a tab in a Chrome window from another macOS Space. Use `spaceguard open-url --app "Google Chrome" <url>` first. It opens a background tab by default; use `--activate` only when the target Chrome window should be brought forward.
+
+To operate the opened tab, use `browser.user.openTabs()` to find the matching URL, then `browser.user.claimTab(tab)` to move it into the current agent tab group. Do not operate ordinary user tabs directly when a claimed agent tab can be used. Finalize browser work with `browser.tabs.finalize({ keep: [...] })`, keeping only tabs the user needs.
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop. If the user explicitly identifies the correct Desktop, run `spaceguard bind --desktop <n>` before continuing.
 ```
