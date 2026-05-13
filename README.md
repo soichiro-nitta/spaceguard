@@ -43,12 +43,41 @@ SpaceGuard needs macOS Accessibility permission because it reads the Codex windo
 2. If macOS asks for permission, allow the terminal/Codex host under System Settings > Privacy & Security > Accessibility.
 3. Run the command again.
 
+## Codex setup
+
+Register the SpaceGuard plugin with Codex:
+
+```sh
+spaceguard setup-codex
+```
+
+This installs or updates the plugin at `~/plugins/spaceguard` and registers it in `~/.agents/plugins/marketplace.json`. It does not edit your personal Codex rules.
+
+To preview the changes first:
+
+```sh
+spaceguard setup-codex --dry-run
+```
+
+To also add a managed SpaceGuard rule block to `~/.codex/AGENTS.md`:
+
+```sh
+spaceguard setup-codex --with-agents-rule
+```
+
+This mode asks before each step and backs up `~/.codex/AGENTS.md` before changing it. To run without prompts:
+
+```sh
+spaceguard setup-codex --with-agents-rule --yes
+```
+
 ## CLI
 
 ```sh
 spaceguard detect --json
 spaceguard windows --json
 spaceguard assert --app "Google Chrome"
+spaceguard setup-codex
 spaceguard menubar
 ```
 
@@ -81,7 +110,7 @@ If detection fails or confidence is lower than that, do not operate existing win
 
 ## Codex plugin
 
-This repository is also a Codex plugin. The plugin does not install the CLI by itself; install the CLI with Homebrew first, then enable the plugin in Codex.
+This repository is also a Codex plugin. The plugin does not install the CLI by itself; install the CLI first, then run `spaceguard setup-codex`.
 
 The plugin provides the `spaceguard-safe-desktop-operation` skill. It teaches Codex to run `spaceguard detect --json` before Chrome, Computer Use, or desktop app operations.
 

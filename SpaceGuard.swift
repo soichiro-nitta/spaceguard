@@ -2,10 +2,34 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-let stateURL = URL(fileURLWithPath: NSHomeDirectory())
+func spaceGuardHomeDirectory() -> String {
+    if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+        return home
+    }
+    return NSHomeDirectory()
+}
+
+let stateURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/state.json")
-let lastDetectionURL = URL(fileURLWithPath: NSHomeDirectory())
+let lastDetectionURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/last-detection.json")
+let pluginInstallURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
+    .appendingPathComponent("plugins/spaceguard")
+let marketplaceURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
+    .appendingPathComponent(".agents/plugins/marketplace.json")
+let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
+    .appendingPathComponent(".codex/AGENTS.md")
+let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
+let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
+let spaceGuardRuleBlock = """
+\(spaceGuardRuleBegin)
+## SpaceGuard
+
+Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGuard plugin workflow.
+
+If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
+\(spaceGuardRuleEnd)
+"""
 
 struct BoundState: Codable {
     let windowId: Int
@@ -65,6 +89,12 @@ struct WindowsPayload: Encodable {
 struct ErrorPayload: Encodable {
     let ok: Bool
     let error: String
+}
+
+struct SetupCodexOptions {
+    let dryRun: Bool
+    let yes: Bool
+    let withAgentsRule: Bool
 }
 
 struct SpaceInfo {
@@ -742,6 +772,206 @@ enum SpaceGuardCore {
         ))
         return 0
     }
+
+    static func setupCodex(options: SetupCodexOptions) -> Int32 {
+        print("SpaceGuard Codex setup")
+        print("Plugin path: \(pluginInstallURL.path)")
+        print("Marketplace: \(marketplaceURL.path)")
+        if options.withAgentsRule {
+            print("Codex rules: \(codexAgentsURL.path)")
+        } else {
+            print("Codex rules: skipped. Use --with-agents-rule to add the managed rule block.")
+        }
+
+        if !runSetupStep(title: "Install or update local plugin", options: options) {
+            print("Skipped plugin install/update")
+        } else if !options.dryRun {
+            do {
+                try installOrUpdatePlugin()
+                print("OK plugin is ready at \(pluginInstallURL.path)")
+            } catch {
+                print("NG plugin install/update failed: \(error.localizedDescription)")
+                return 1
+            }
+        }
+
+        if !runSetupStep(title: "Update Codex plugin marketplace", options: options) {
+            print("Skipped marketplace update")
+        } else if !options.dryRun {
+            do {
+                try updateMarketplace()
+                print("OK marketplace updated at \(marketplaceURL.path)")
+            } catch {
+                print("NG marketplace update failed: \(error.localizedDescription)")
+                return 1
+            }
+        }
+
+        if options.withAgentsRule {
+            if !runSetupStep(title: "Backup and update Codex AGENTS.md rule block", options: options) {
+                print("Skipped Codex rule update")
+            } else if !options.dryRun {
+                do {
+                    let backup = try updateCodexAgentsRule()
+                    if let backup {
+                        print("OK Codex rule updated. Backup: \(backup.path)")
+                    } else {
+                        print("OK Codex rule created at \(codexAgentsURL.path)")
+                    }
+                } catch {
+                    print("NG Codex rule update failed: \(error.localizedDescription)")
+                    return 1
+                }
+            }
+        }
+
+        if options.dryRun {
+            print("Dry run complete. No files were changed.")
+        } else {
+            print("Setup complete. Restart Codex if the plugin does not appear immediately.")
+        }
+        return 0
+    }
+
+    static func runSetupStep(title: String, options: SetupCodexOptions) -> Bool {
+        if options.dryRun {
+            print("DRY-RUN would: \(title)")
+            return true
+        }
+        if options.yes {
+            print("DO \(title)")
+            return true
+        }
+        print("\n\(title)")
+        print("Proceed? [y/N] ", terminator: "")
+        let answer = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return answer == "y" || answer == "yes"
+    }
+
+    static func installOrUpdatePlugin() throws {
+        try FileManager.default.createDirectory(
+            at: pluginInstallURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: pluginInstallURL.appendingPathComponent(".git").path) {
+            try runProcess("/usr/bin/git", ["-C", pluginInstallURL.path, "pull", "--ff-only"])
+        } else {
+            if FileManager.default.fileExists(atPath: pluginInstallURL.path) {
+                throw NSError(
+                    domain: "SpaceGuard",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "\(pluginInstallURL.path) exists but is not a git checkout"]
+                )
+            }
+            try runProcess("/usr/bin/git", [
+                "clone",
+                "https://github.com/soichiro-nitta/spaceguard.git",
+                pluginInstallURL.path
+            ])
+        }
+    }
+
+    static func updateMarketplace() throws {
+        try FileManager.default.createDirectory(
+            at: marketplaceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        var root: [String: Any] = [
+            "name": "local",
+            "interface": ["displayName": "Local Codex Plugins"],
+            "plugins": []
+        ]
+        if FileManager.default.fileExists(atPath: marketplaceURL.path) {
+            let data = try Data(contentsOf: marketplaceURL)
+            if
+                let existing = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            {
+                root = existing
+            }
+        }
+
+        var plugins = root["plugins"] as? [[String: Any]] ?? []
+        plugins.removeAll { $0["name"] as? String == "spaceguard" }
+        plugins.append([
+            "name": "spaceguard",
+            "source": [
+                "source": "local",
+                "path": "./plugins/spaceguard"
+            ],
+            "policy": [
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL"
+            ],
+            "category": "Productivity"
+        ])
+        root["plugins"] = plugins
+        if root["name"] == nil {
+            root["name"] = "local"
+        }
+        if root["interface"] == nil {
+            root["interface"] = ["displayName": "Local Codex Plugins"]
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: marketplaceURL)
+    }
+
+    static func updateCodexAgentsRule() throws -> URL? {
+        try FileManager.default.createDirectory(
+            at: codexAgentsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let existing = (try? String(contentsOf: codexAgentsURL, encoding: .utf8)) ?? ""
+        let backup: URL?
+        if FileManager.default.fileExists(atPath: codexAgentsURL.path) {
+            backup = codexAgentsURL.deletingLastPathComponent()
+                .appendingPathComponent("AGENTS.md.bak.\(backupTimestamp())")
+            try FileManager.default.copyItem(at: codexAgentsURL, to: backup!)
+        } else {
+            backup = nil
+        }
+
+        let updated: String
+        if
+            let beginRange = existing.range(of: spaceGuardRuleBegin),
+            let endRange = existing.range(of: spaceGuardRuleEnd),
+            beginRange.lowerBound < endRange.upperBound
+        {
+            updated = existing.replacingCharacters(
+                in: beginRange.lowerBound..<endRange.upperBound,
+                with: spaceGuardRuleBlock
+            )
+        } else if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updated = "\(spaceGuardRuleBlock)\n"
+        } else {
+            updated = "\(existing.trimmingCharacters(in: .whitespacesAndNewlines))\n\n\(spaceGuardRuleBlock)\n"
+        }
+        try updated.write(to: codexAgentsURL, atomically: true, encoding: .utf8)
+        return backup
+    }
+
+    static func backupTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter.string(from: Date())
+    }
+
+    static func runProcess(_ executable: String, _ arguments: [String]) throws {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = arguments
+        let output = Pipe()
+        task.standardOutput = output
+        task.standardError = output
+        try task.run()
+        task.waitUntilExit()
+        if task.terminationStatus != 0 {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let message = String(data: data, encoding: .utf8) ?? "process failed"
+            throw NSError(domain: "SpaceGuard", code: Int(task.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
 }
 
 extension String {
@@ -866,13 +1096,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -918,11 +1148,17 @@ func runCLI(arguments: [String]) {
         let result = SpaceGuardCore.assertText(app: arguments[appIndex + 1])
         print(result.0)
         exit(result.1)
+    case "setup-codex":
+        exit(SpaceGuardCore.setupCodex(options: SetupCodexOptions(
+            dryRun: arguments.contains("--dry-run"),
+            yes: arguments.contains("--yes"),
+            withAgentsRule: arguments.contains("--with-agents-rule")
+        )))
     case "clear":
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
         exit(2)
     }
 }
