@@ -32,11 +32,14 @@ brew install --HEAD spaceguard
 ## Operating Rules
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
+- `cached-high` means SpaceGuard reused a `high` result from the same thread only after confirming the cached Codex window still exists in the same Desktop and the cache is recent. Treat it as the current thread's target Space, but re-run `detect` if the user says the Codex window moved.
+- `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. Use it only when it is reasonable for the current task, and prefer `spaceguard bind --desktop <n>` when the user can identify the correct Desktop.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
 - For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules.
 - Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 - Do not run `open-url`, `assert`, or `windows` from a stale detection created by another Codex thread. If SpaceGuard reports a thread mismatch, run `spaceguard detect --json` in the current thread or stop.
+- `spaceguard open-url --activate --app "Google Chrome" "<url>"` brings the matched Chrome window in the detected Desktop forward and activates the new tab. Use it only after the target Desktop has been detected.
 - After opening a Chrome URL, run `spaceguard windows` or `spaceguard assert --app "Google Chrome"` when practical to confirm the target Desktop still contains the Chrome window.
 - If a new non-Chrome window is needed, create it only when you can verify it appears in the detected Space.
 - If verification is ambiguous, stop and ask the user which window or Space should be used.

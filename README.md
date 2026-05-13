@@ -145,16 +145,42 @@ spaceguard detect --json
 spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
 ```
 
-`open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。
+`open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。`--activate`を付けると、対象デスクトップ内のChromeウィンドウを前面化し、新しく作ったタブをアクティブにします。
 
 その後のタブ操作は、Codex Chrome Extension側のタブグループ運用やユーザーのグローバルルールに従います。SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChromeを誤って選びにくくするための補助ツールです。
 
 `open-url`、`assert`、`windows`は、現在の`CODEX_THREAD_ID`と最後の検出結果が一致している場合だけ動きます。別スレッドの検出結果が残っている場合は、その結果を使わず止まります。
 
+`detect`がCodexウィンドウを直接特定できない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
+
 複数のCodexウィンドウがあり、自動検出が曖昧な場合は推測せず止まります。ユーザーが「このスレッドはデスクトップ3」と明示できる場合は、手動で固定できます。
 
 ```sh
 spaceguard bind --desktop 3
+```
+
+## 動作確認
+
+ChromeやComputer Useを使う前に、対象デスクトップを検出できることを確認します。
+
+```sh
+spaceguard detect --json
+spaceguard windows --json
+spaceguard assert --app "Google Chrome"
+```
+
+ユーザーが別デスクトップを見ている状態でも、直前に同じスレッドで`high`検出できていれば、`detect`は`cached-high`で同じデスクトップを返すことを確認します。`cached-high`は10分以内のキャッシュだけを使い、対象Codexウィンドウが見つからない場合は使いません。
+
+ChromeにURLを開く挙動は、まずバックグラウンドタブで確認します。
+
+```sh
+spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
+```
+
+前面化が必要な場合だけ`--activate`を付け、検出済みデスクトップ内のChromeウィンドウが前面化されることを確認します。
+
+```sh
+spaceguard open-url --activate --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
 ```
 
 ## Codexに入れておくルール例

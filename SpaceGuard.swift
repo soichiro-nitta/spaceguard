@@ -19,6 +19,7 @@ let marketplaceURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".agents/plugins/marketplace.json")
 let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".codex/AGENTS.md")
+let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleBlock = """
@@ -284,8 +285,9 @@ enum SpaceGuardCore {
             at: lastDetectionURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let storedConfidence = detection.confidence == "cached-high" ? "high" : detection.confidence
         let payload = LastDetection(
-            confidence: detection.confidence,
+            confidence: storedConfidence,
             threadId: detection.threadId,
             threadName: detection.threadName,
             electronWindowId: detection.electronWindowId,
@@ -591,7 +593,9 @@ enum SpaceGuardCore {
               if boundsMatch and titleMatch then
                 make new tab at end of tabs of w with properties {URL:targetURL}
                 if shouldActivate then
+                  set index of w to 1
                   set active tab index of w to (count of tabs of w)
+                  activate
                   return "OK opened URL in target Google Chrome window"
                 end if
                 return "OK opened background URL in target Google Chrome window"
@@ -956,6 +960,10 @@ enum SpaceGuardCore {
         windows: [Int: WindowInfo],
         failureReason: String
     ) -> Result<DetectionResult, DetectionError> {
+        if let cached = cachedDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
+            return .success(cached)
+        }
+
         let activeSpaces = snapshot.spaces.filter { snapshot.activeSpaceUuids.contains($0.uuid) }
         let activeCodexMatches = activeSpaces.flatMap { space in
             space.windows.compactMap { id -> (SpaceInfo, WindowInfo)? in
@@ -986,6 +994,47 @@ enum SpaceGuardCore {
             space: match.0,
             codexWindowsInSpace: codexCountInSpace
         ))
+    }
+
+    static func cachedDetectionResult(
+        threadId: String,
+        spaces: [SpaceInfo],
+        windows: [Int: WindowInfo]
+    ) -> DetectionResult? {
+        guard
+            let cached = loadLastDetection(),
+            cached.threadId == threadId,
+            cached.confidence == "high",
+            isRecentDetection(cached, maxAge: highConfidenceCacheMaxAgeSeconds),
+            let space = spaces.first(where: { $0.uuid == cached.spaceUuid }),
+            space.windows.contains(cached.cgWindowId),
+            let window = windows[cached.cgWindowId],
+            window.owner == "Codex",
+            window.layer == 0,
+            window.width > 200,
+            window.height > 200
+        else {
+            return nil
+        }
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        return DetectionResult(
+            confidence: "cached-high",
+            threadId: cached.threadId,
+            threadName: cached.threadName,
+            electronWindowId: cached.electronWindowId,
+            window: window,
+            space: space,
+            codexWindowsInSpace: codexCountInSpace
+        )
+    }
+
+    static func isRecentDetection(_ detection: LastDetection, maxAge: TimeInterval) -> Bool {
+        guard let detectedAt = ISO8601DateFormatter().date(from: detection.detectedAt) else {
+            return false
+        }
+        return Date().timeIntervalSince(detectedAt) <= maxAge
     }
 
     static func formatDetection(_ detection: DetectionResult) -> String {
