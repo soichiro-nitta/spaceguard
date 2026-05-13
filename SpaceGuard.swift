@@ -940,16 +940,16 @@ enum SpaceGuardCore {
         }
     }
 
-    static func windowsForCurrentThreadText() -> String {
+    static func windowsForCurrentThreadText() -> (String, Int32) {
         let detectionResult = loadCurrentThreadDetection()
         guard case .success(let detection) = detectionResult else {
             if case .failure(let error) = detectionResult {
-                return error.message
+                return (error.message, 1)
             }
-            return "現在スレッドの作業場所はまだ検出されていません"
+            return ("現在スレッドの作業場所はまだ検出されていません", 1)
         }
         guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
-            return "最後に検出したデスクトップが見つかりません"
+            return ("最後に検出したデスクトップが見つかりません", 1)
         }
         let windows = loadWindows()
         var lines = ["\(spaceLabel(space))のウィンドウ"]
@@ -958,7 +958,7 @@ enum SpaceGuardCore {
                 lines.append(userDisplayName(window))
             }
         }
-        return lines.joined(separator: "\n")
+        return (lines.joined(separator: "\n"), 0)
     }
 
     static func windowsForLastDetectionJSON() -> Int32 {
@@ -1404,7 +1404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(header("操作対象になる同じデスクトップのウィンドウ"))
-        for line in SpaceGuardCore.windowsForCurrentThreadText().split(separator: "\n") {
+        for line in SpaceGuardCore.windowsForCurrentThreadText().0.split(separator: "\n") {
             menu.addItem(label(String(line)))
         }
         menu.addItem(NSMenuItem.separator())
@@ -1512,7 +1512,9 @@ func runCLI(arguments: [String]) {
         if arguments.contains("--json") {
             exit(SpaceGuardCore.windowsForLastDetectionJSON())
         }
-        print(SpaceGuardCore.windowsForCurrentThreadText())
+        let result = SpaceGuardCore.windowsForCurrentThreadText()
+        print(result.0)
+        exit(result.1)
     case "detect-current-thread":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
