@@ -71,6 +71,18 @@ Only operate in the detected `space.desktopName` when `confidence` is `high` or 
 If detection fails or confidence is lower than that, do not operate existing windows from another Space; ask the user or create a new window only after the target Space is clear.
 ```
 
+## Codex plugin
+
+This repository is also a Codex plugin. The plugin does not install the CLI by itself; install the CLI with Homebrew first, then enable the plugin in Codex.
+
+The plugin provides the `spaceguard-safe-desktop-operation` skill. It teaches Codex to run `spaceguard detect --json` before Chrome, Computer Use, or desktop app operations.
+
+For users who want maximum certainty, keep a short global rule as well:
+
+```md
+Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGuard plugin workflow.
+```
+
 ## Menu bar helper
 
 `spaceguard menubar` starts an optional menu bar helper. It is only for visibility. The CLI remains the source of truth for agent workflows.

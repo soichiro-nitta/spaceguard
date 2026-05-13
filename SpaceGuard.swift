@@ -526,7 +526,10 @@ enum SpaceGuardCore {
 
         do {
             try task.run()
-            task.waitUntilExit()
+            if !task.waitUntilExit(seconds: 2) {
+                task.terminate()
+                return nil
+            }
         } catch {
             return nil
         }
@@ -745,6 +748,16 @@ enum SpaceGuardCore {
 extension String {
     func withExit(_ code: Int32) -> (String, Int32) {
         (self, code)
+    }
+}
+
+extension Process {
+    func waitUntilExit(seconds: TimeInterval) -> Bool {
+        let limit = Date().addingTimeInterval(seconds)
+        while isRunning && Date() < limit {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return !isRunning
     }
 }
 

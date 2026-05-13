@@ -1,0 +1,36 @@
+{
+  "name": "spaceguard",
+  "version": "0.1.0",
+  "description": "Keep Codex desktop automation scoped to the current macOS Space.",
+  "author": {
+    "name": "Soichiro Nitta",
+    "url": "https://github.com/soichiro-nitta"
+  },
+  "homepage": "https://github.com/soichiro-nitta/spaceguard",
+  "repository": "https://github.com/soichiro-nitta/spaceguard",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "macos",
+    "spaces",
+    "automation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "SpaceGuard",
+    "shortDescription": "Scope Codex UI automation to the current macOS Space",
+    "longDescription": "SpaceGuard helps Codex detect the macOS Desktop/Space that contains the current thread before operating Chrome, Computer Use, or other desktop windows.",
+    "developerName": "Soichiro Nitta",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/soichiro-nitta/spaceguard",
+    "defaultPrompt": [
+      "Check the current Space before using Chrome.",
+      "List windows in this Codex thread's Desktop.",
+      "Verify Computer Use stays in this Space."
+    ],
+    "brandColor": "#334155"
+  }
+}
