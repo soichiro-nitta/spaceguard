@@ -25,13 +25,13 @@ let spaceGuardRuleBlock = """
 \(spaceGuardRuleBegin)
 ## SpaceGuard
 
-Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGuard plugin workflow.
+Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard only to identify the target macOS Desktop/Space for this Codex thread.
 
-If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
-
-When opening a new Chrome URL, do not use the Codex Chrome Extension `tabs.new()` as the first step because it may create a tab in a Chrome window from another macOS Space. Use `spaceguard open-url --app "Google Chrome" <url>` first, then operate the tab after confirming it is in the detected Desktop.
+Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `cached-high`, or `fallback-active-space`.
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop. If the user explicitly identifies the correct Desktop, run `spaceguard bind --desktop <n>` before continuing.
+
+For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 \(spaceGuardRuleEnd)
 """
 
