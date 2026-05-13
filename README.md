@@ -2,6 +2,15 @@
 
 SpaceGuard is a small macOS CLI for AI agents that need to keep browser or desktop automation inside the same macOS Desktop/Space as the current Codex thread.
 
+In plain terms: if you keep different projects in different macOS Desktops, SpaceGuard helps Codex stay inside the Desktop where the current Codex conversation lives. Before Codex touches Chrome or another desktop app, it can ask SpaceGuard "which Desktop am I supposed to be working in?", then only use windows that belong to that Desktop.
+
+It is useful for workflows like:
+
+- keeping one project per macOS Desktop without Codex jumping into another project;
+- opening a URL in the Chrome window that belongs to the current Codex thread's Desktop;
+- checking which Chrome, Finder, editor, or app windows are safe to operate;
+- stopping instead of guessing when multiple Codex windows make the target Desktop ambiguous.
+
 It detects the Codex window for the current `CODEX_THREAD_ID`, maps that window to the macOS Space data in `com.apple.spaces`, and returns the target desktop as text or JSON.
 
 This project intentionally uses private/undocumented macOS Spaces data. Treat it as a pragmatic local guardrail for agent workflows, not as a stable public macOS API.
