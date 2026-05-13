@@ -97,6 +97,12 @@ struct SetupCodexOptions {
     let withAgentsRule: Bool
 }
 
+struct UninstallOptions {
+    let dryRun: Bool
+    let yes: Bool
+    let keepAgentsRule: Bool
+}
+
 struct SpaceInfo {
     let uuid: String
     let id: Int?
@@ -972,6 +978,152 @@ enum SpaceGuardCore {
             throw NSError(domain: "SpaceGuard", code: Int(task.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
+
+    static func uninstall(options: UninstallOptions) -> Int32 {
+        print("SpaceGuard uninstall")
+        print("Will remove SpaceGuard-owned files and entries only.")
+
+        let paths = uninstallPaths()
+        for path in paths {
+            if FileManager.default.fileExists(atPath: path.path) {
+                print("Will remove: \(path.path)")
+            } else {
+                print("Not found: \(path.path)")
+            }
+        }
+        print("Will remove marketplace entry named: spaceguard")
+
+        if options.keepAgentsRule {
+            print("Will keep Codex AGENTS.md SpaceGuard rule block")
+        } else {
+            printAgentsRuleRemovalPreview()
+        }
+
+        if options.dryRun {
+            print("Dry run complete. No files were changed.")
+            return 0
+        }
+
+        if !options.yes {
+            print("\nProceed with uninstall? [y/N] ", terminator: "")
+            let answer = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if answer != "y" && answer != "yes" {
+                print("Cancelled.")
+                return 1
+            }
+        }
+
+        do {
+            try removeUninstallPaths(paths)
+            try removeMarketplaceEntry()
+            if !options.keepAgentsRule {
+                try removeCodexAgentsRule(confirmWhenInteractive: !options.yes)
+            }
+            print("Uninstall complete.")
+            return 0
+        } catch {
+            print("NG uninstall failed: \(error.localizedDescription)")
+            return 1
+        }
+    }
+
+    static func uninstallPaths() -> [URL] {
+        [
+            URL(fileURLWithPath: spaceGuardHomeDirectory()).appendingPathComponent(".local/bin/spaceguard"),
+            URL(fileURLWithPath: spaceGuardHomeDirectory()).appendingPathComponent(".spaceguard"),
+            pluginInstallURL
+        ]
+    }
+
+    static func removeUninstallPaths(_ paths: [URL]) throws {
+        for path in paths where FileManager.default.fileExists(atPath: path.path) {
+            try FileManager.default.removeItem(at: path)
+            print("Removed: \(path.path)")
+        }
+    }
+
+    static func removeMarketplaceEntry() throws {
+        guard FileManager.default.fileExists(atPath: marketplaceURL.path) else {
+            return
+        }
+        let data = try Data(contentsOf: marketplaceURL)
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        let plugins = root["plugins"] as? [[String: Any]] ?? []
+        let filtered = plugins.filter { $0["name"] as? String != "spaceguard" }
+        if filtered.count != plugins.count {
+            root["plugins"] = filtered
+            let updated = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+            try updated.write(to: marketplaceURL)
+            print("Removed marketplace entry: spaceguard")
+        }
+    }
+
+    static func agentsRuleRange(in text: String) -> Range<String.Index>? {
+        guard
+            let beginRange = text.range(of: spaceGuardRuleBegin),
+            let endRange = text.range(of: spaceGuardRuleEnd),
+            beginRange.lowerBound < endRange.upperBound
+        else {
+            return nil
+        }
+        return beginRange.lowerBound..<endRange.upperBound
+    }
+
+    static func agentsRuleBlockText() -> String? {
+        guard
+            let text = try? String(contentsOf: codexAgentsURL, encoding: .utf8),
+            let range = agentsRuleRange(in: text)
+        else {
+            return nil
+        }
+        return String(text[range])
+    }
+
+    static func printAgentsRuleRemovalPreview() {
+        guard let block = agentsRuleBlockText() else {
+            print("No SpaceGuard managed rule block found in \(codexAgentsURL.path)")
+            return
+        }
+        print("Found SpaceGuard managed rule block in \(codexAgentsURL.path):")
+        print("--- remove begin ---")
+        print(block)
+        print("--- remove end ---")
+    }
+
+    static func removeCodexAgentsRule(confirmWhenInteractive: Bool) throws {
+        guard
+            let text = try? String(contentsOf: codexAgentsURL, encoding: .utf8),
+            let range = agentsRuleRange(in: text)
+        else {
+            return
+        }
+
+        let block = String(text[range])
+        print("SpaceGuard rule block selected for removal:")
+        print("--- remove begin ---")
+        print(block)
+        print("--- remove end ---")
+
+        if confirmWhenInteractive {
+            print("Remove only this block from \(codexAgentsURL.path)? [y/N] ", terminator: "")
+            let answer = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if answer != "y" && answer != "yes" {
+                print("Skipped Codex rule block removal.")
+                return
+            }
+        }
+
+        let backup = codexAgentsURL.deletingLastPathComponent()
+            .appendingPathComponent("AGENTS.md.bak.\(backupTimestamp())")
+        try FileManager.default.copyItem(at: codexAgentsURL, to: backup)
+        let updated = text.replacingCharacters(in: range, with: "")
+            .replacingOccurrences(of: "\n\n\n", with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+        try updated.write(to: codexAgentsURL, atomically: true, encoding: .utf8)
+        print("Removed Codex rule block. Backup: \(backup.path)")
+    }
 }
 
 extension String {
@@ -1096,13 +1248,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -1154,11 +1306,17 @@ func runCLI(arguments: [String]) {
             yes: arguments.contains("--yes"),
             withAgentsRule: arguments.contains("--with-agents-rule")
         )))
+    case "uninstall":
+        exit(SpaceGuardCore.uninstall(options: UninstallOptions(
+            dryRun: arguments.contains("--dry-run"),
+            yes: arguments.contains("--yes"),
+            keepAgentsRule: arguments.contains("--keep-agents-rule")
+        )))
     case "clear":
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
         exit(2)
     }
 }

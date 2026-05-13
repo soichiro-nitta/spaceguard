@@ -71,6 +71,28 @@ This mode asks before each step and backs up `~/.codex/AGENTS.md` before changin
 spaceguard setup-codex --with-agents-rule --yes
 ```
 
+## Uninstall
+
+Preview what SpaceGuard would remove:
+
+```sh
+spaceguard uninstall --dry-run
+```
+
+Remove SpaceGuard-owned files and Codex registration:
+
+```sh
+spaceguard uninstall
+```
+
+`uninstall` removes `~/.local/bin/spaceguard`, `~/.spaceguard/`, `~/plugins/spaceguard`, and the `spaceguard` entry from `~/.agents/plugins/marketplace.json`.
+
+If a managed SpaceGuard block exists in `~/.codex/AGENTS.md`, SpaceGuard prints the exact block first and asks before removing only that block. It never deletes the whole `AGENTS.md` file. To keep the rule block:
+
+```sh
+spaceguard uninstall --keep-agents-rule
+```
+
 ## CLI
 
 ```sh
@@ -78,6 +100,7 @@ spaceguard detect --json
 spaceguard windows --json
 spaceguard assert --app "Google Chrome"
 spaceguard setup-codex
+spaceguard uninstall
 spaceguard menubar
 ```
 
