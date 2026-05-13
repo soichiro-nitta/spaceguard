@@ -930,8 +930,7 @@ enum SpaceGuardCore {
         let existing = (try? String(contentsOf: codexAgentsURL, encoding: .utf8)) ?? ""
         let backup: URL?
         if FileManager.default.fileExists(atPath: codexAgentsURL.path) {
-            backup = codexAgentsURL.deletingLastPathComponent()
-                .appendingPathComponent("AGENTS.md.bak.\(backupTimestamp())")
+            backup = uniqueBackupURL(for: codexAgentsURL)
             try FileManager.default.copyItem(at: codexAgentsURL, to: backup!)
         } else {
             backup = nil
@@ -961,6 +960,19 @@ enum SpaceGuardCore {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter.string(from: Date())
+    }
+
+    static func uniqueBackupURL(for url: URL) -> URL {
+        let directory = url.deletingLastPathComponent()
+        let baseName = url.lastPathComponent
+        let timestamp = backupTimestamp()
+        var candidate = directory.appendingPathComponent("\(baseName).bak.\(timestamp)")
+        var index = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(baseName).bak.\(timestamp).\(index)")
+            index += 1
+        }
+        return candidate
     }
 
     static func runProcess(_ executable: String, _ arguments: [String]) throws {
@@ -1014,11 +1026,11 @@ enum SpaceGuardCore {
         }
 
         do {
-            try removeUninstallPaths(paths)
-            try removeMarketplaceEntry()
             if !options.keepAgentsRule {
                 try removeCodexAgentsRule(confirmWhenInteractive: !options.yes)
             }
+            try removeMarketplaceEntry()
+            try removeUninstallPaths(paths)
             print("Uninstall complete.")
             return 0
         } catch {
@@ -1115,8 +1127,7 @@ enum SpaceGuardCore {
             }
         }
 
-        let backup = codexAgentsURL.deletingLastPathComponent()
-            .appendingPathComponent("AGENTS.md.bak.\(backupTimestamp())")
+        let backup = uniqueBackupURL(for: codexAgentsURL)
         try FileManager.default.copyItem(at: codexAgentsURL, to: backup)
         let updated = text.replacingCharacters(in: range, with: "")
             .replacingOccurrences(of: "\n\n\n", with: "\n\n")
