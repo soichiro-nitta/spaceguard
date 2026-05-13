@@ -22,7 +22,7 @@ The Homebrew formula lives in [`soichiro-nitta/homebrew-tap`](https://github.com
 One-line install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/soichiro-nitta/spaceguard/main/install.sh | zsh
+curl -fsSL https://raw.githubusercontent.com/soichiro-nitta/spaceguard/refs/heads/main/install.sh | zsh
 ```
 
 From a clone:
