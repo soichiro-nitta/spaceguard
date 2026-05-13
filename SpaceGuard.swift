@@ -28,6 +28,10 @@ let spaceGuardRuleBlock = """
 Before using Chrome, Computer Use, or macOS desktop automation, use the SpaceGuard plugin workflow.
 
 If the plugin is unavailable, run `spaceguard detect --json` and only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
+
+When opening a new Chrome URL, do not use the Codex Chrome Extension `tabs.new()` as the first step because it may create a tab in a Chrome window from another macOS Space. Use `spaceguard open-url --app "Google Chrome" <url>` first, then operate the tab after confirming it is in the detected Desktop.
+
+If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop. If the user explicitly identifies the correct Desktop, run `spaceguard bind --desktop <n>` before continuing.
 \(spaceGuardRuleEnd)
 """
 
@@ -392,6 +396,35 @@ enum SpaceGuardCore {
         return "OK bound \(displayName(selected.1)) \(spaceLabel(selected.0)) internalSpace=\(selected.0.id.map(String.init) ?? "?")"
     }
 
+    static func bindDesktop(index: Int, threadId: String?) -> (String, Int32) {
+        guard let threadId, !threadId.isEmpty else {
+            return ("NG CODEX_THREAD_ID is missing", 1)
+        }
+        let spaces = loadSpaces()
+        let windows = loadWindows()
+        guard let space = spaces.first(where: { $0.desktopIndex == index }) else {
+            return ("NG デスクトップ\(index) was not found", 1)
+        }
+        guard let window = space.windows.compactMap({ windows[$0] }).first(where: {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }) else {
+            return ("NG no Codex window in \(spaceLabel(space))", 1)
+        }
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        saveLastDetection(DetectionResult(
+            confidence: "high",
+            threadId: threadId,
+            threadName: currentThreadName(threadId: threadId),
+            electronWindowId: "manual-desktop-\(index)",
+            window: window,
+            space: space,
+            codexWindowsInSpace: codexCountInSpace
+        ))
+        return ("OK manually bound thread=\(threadId) to \(spaceLabel(space))\n\(displayName(window))", 0)
+    }
+
     static func statusText() -> String {
         guard let state = loadState() else {
             return "UNBOUND"
@@ -445,6 +478,12 @@ enum SpaceGuardCore {
             return ("NG last detected Space was not found", 1)
         }
         let windows = loadWindows()
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if detection.electronWindowId == nil && totalCodexWindows > 1 {
+            return ("NG last detection is ambiguous because multiple Codex windows are open and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+        }
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
@@ -452,6 +491,112 @@ enum SpaceGuardCore {
             return ("NG no \(app) window in \(spaceLabel(space))", 1)
         }
         return (["OK \(matches.count) \(app) window(s) in \(spaceLabel(space))"] + matches.map(displayName)).joined(separator: "\n").withExit(0)
+    }
+
+    static func openURLText(app: String, url: String) -> (String, Int32) {
+        if app != "Google Chrome" {
+            return ("NG open-url currently supports only Google Chrome", 1)
+        }
+        guard URL(string: url)?.scheme != nil else {
+            return ("NG invalid URL: \(url)", 1)
+        }
+        guard let detection = loadLastDetection() else {
+            return ("NG current thread has not been detected yet", 1)
+        }
+        guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
+            return ("NG last detected Space was not found", 1)
+        }
+        let windows = loadWindows()
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if detection.electronWindowId == nil && totalCodexWindows > 1 {
+            return ("NG last detection is ambiguous because multiple Codex windows are open and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+        }
+        let matches = space.windows.compactMap { windows[$0] }.filter {
+            $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
+        }
+        guard let window = matches.first else {
+            return ("NG no \(app) window in \(spaceLabel(space))", 1)
+        }
+        return openChromeURL(window: window, url: url, space: space)
+    }
+
+    static func openChromeURL(window: WindowInfo, url: String, space: SpaceInfo) -> (String, Int32) {
+        let left = Int(window.x.rounded())
+        let top = Int(window.y.rounded())
+        let right = Int((window.x + window.width).rounded())
+        let bottom = Int((window.y + window.height).rounded())
+        let script = """
+        on run argv
+          set targetTitle to item 1 of argv
+          set targetLeft to item 2 of argv as integer
+          set targetTop to item 3 of argv as integer
+          set targetRight to item 4 of argv as integer
+          set targetBottom to item 5 of argv as integer
+          set targetURL to item 6 of argv
+
+          tell application "Google Chrome"
+            repeat with w in windows
+              set b to bounds of w
+              set titleText to title of w
+              set leftDiff to my absValue((item 1 of b) - targetLeft)
+              set topDiff to my absValue((item 2 of b) - targetTop)
+              set rightDiff to my absValue((item 3 of b) - targetRight)
+              set bottomDiff to my absValue((item 4 of b) - targetBottom)
+              set boundsMatch to leftDiff <= 3 and topDiff <= 3 and rightDiff <= 3 and bottomDiff <= 3
+              set titleMatch to titleText is targetTitle or targetTitle is "" or titleText contains targetTitle or targetTitle contains titleText
+              if boundsMatch and titleMatch then
+                make new tab at end of tabs of w with properties {URL:targetURL}
+                set active tab index of w to (count of tabs of w)
+                return "OK opened URL in target Google Chrome window"
+              end if
+            end repeat
+          end tell
+          return "NG matching Google Chrome window was not found"
+        end run
+
+        on absValue(n)
+          if n < 0 then return -n
+          return n
+        end absValue
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = [
+            "-e", script,
+            window.title,
+            String(left),
+            String(top),
+            String(right),
+            String(bottom),
+            url
+        ]
+
+        let pipe = Pipe()
+        let errorPipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = errorPipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return ("NG failed to run osascript: \(error.localizedDescription)", 1)
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if task.terminationStatus == 0 && output.hasPrefix("OK") {
+            return ("\(output) in \(spaceLabel(space))\n\(displayName(window))", 0)
+        }
+        if !error.isEmpty {
+            return ("NG \(error)", 1)
+        }
+        return (output.isEmpty ? "NG failed to open URL in target Google Chrome window" : output, 1)
     }
 
     static func codexMainWindowRect() -> RectInfo? {
@@ -629,6 +774,12 @@ enum SpaceGuardCore {
             return nil
         }
         let windows = loadWindows()
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if cached.electronWindowId == nil && totalCodexWindows > 1 {
+            return nil
+        }
         let title = windows[cached.cgWindowId].map(displayName) ?? "Codex #\(cached.cgWindowId)"
         return ("""
         OK confidence=cached-\(cached.confidence) thread=\(cached.threadId) electronWindowId=\(cached.electronWindowId ?? "?") cgWindowId=\(cached.cgWindowId) desktop=\(space.desktopIndex.map(String.init) ?? "?") internalSpace=\(space.id.map(String.init) ?? "?") uuid=\(space.uuid)
@@ -657,6 +808,12 @@ enum SpaceGuardCore {
             width: 0,
             height: 0
         )
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if cached.electronWindowId == nil && totalCodexWindows > 1 {
+            return nil
+        }
         return DetectionPayload(
             ok: true,
             confidence: "cached-\(cached.confidence)",
@@ -680,6 +837,13 @@ enum SpaceGuardCore {
 
         let spaces = loadSpaces()
         let windows = loadWindows()
+        let electronId = latestCodexElectronWindowId(threadId: threadId)
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if electronId == nil && totalCodexWindows > 1 {
+            return .failure(DetectionError(message: "NG multiple Codex windows are open and no thread/window hint is available for thread=\(threadId)"))
+        }
         let candidates = windows.values.filter {
             $0.owner == "Codex"
                 && $0.layer == 0
@@ -696,7 +860,6 @@ enum SpaceGuardCore {
             return .failure(DetectionError(message: "NG matched \(displayName(window)) but no Space contains it"))
         }
 
-        let electronId = latestCodexElectronWindowId(threadId: threadId)
         let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
@@ -1259,13 +1422,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -1281,6 +1444,22 @@ func runCLI(arguments: [String]) {
         print(result.0)
         exit(result.1)
     case "bind":
+        if
+            let desktopIndex = arguments.firstIndex(of: "--desktop"),
+            arguments.indices.contains(desktopIndex + 1),
+            let index = Int(arguments[desktopIndex + 1])
+        {
+            var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
+            if
+                let index = arguments.firstIndex(of: "--thread-id"),
+                arguments.indices.contains(index + 1)
+            {
+                threadId = arguments[index + 1]
+            }
+            let result = SpaceGuardCore.bindDesktop(index: index, threadId: threadId)
+            print(result.0)
+            exit(result.1)
+        }
         print(SpaceGuardCore.bindCodex())
     case "status":
         print(SpaceGuardCore.statusText())
@@ -1311,6 +1490,17 @@ func runCLI(arguments: [String]) {
         let result = SpaceGuardCore.assertText(app: arguments[appIndex + 1])
         print(result.0)
         exit(result.1)
+    case "open-url":
+        guard
+            let appIndex = arguments.firstIndex(of: "--app"),
+            arguments.indices.contains(appIndex + 2)
+        else {
+            print("usage: spaceguard open-url --app \"Google Chrome\" <url>")
+            exit(2)
+        }
+        let result = SpaceGuardCore.openURLText(app: arguments[appIndex + 1], url: arguments[appIndex + 2])
+        print(result.0)
+        exit(result.1)
     case "setup-codex":
         exit(SpaceGuardCore.setupCodex(options: SetupCodexOptions(
             dryRun: arguments.contains("--dry-run"),
@@ -1327,7 +1517,7 @@ func runCLI(arguments: [String]) {
         SpaceGuardCore.clearState()
         print("OK cleared")
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
         exit(2)
     }
 }

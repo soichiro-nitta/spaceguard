@@ -43,6 +43,22 @@ SpaceGuard needs macOS Accessibility permission because it reads the Codex windo
 2. If macOS asks for permission, allow the terminal/Codex host under System Settings > Privacy & Security > Accessibility.
 3. Run the command again.
 
+## Recommended macOS settings
+
+SpaceGuard works best when macOS Spaces stay predictable while an agent is operating windows.
+
+Recommended Desktop & Dock > Mission Control settings:
+
+- Turn off "Automatically rearrange Spaces based on most recent use".
+- Turn off "When switching to an application, switch to a Space with open windows for the application".
+- Turn on "Displays have separate Spaces" if you use multiple displays.
+
+Related posts:
+
+- [Mission Control setting for app switching and Spaces](https://x.com/soichiro_nitta/status/2053734918803587308)
+- [Mission Control setting for stable Space order](https://x.com/soichiro_nitta/status/2053744066744275330)
+- [Mission Control setting for multiple displays](https://x.com/soichiro_nitta/status/2054402153285025979)
+
 ## Codex setup
 
 Register the SpaceGuard plugin with Codex:
@@ -99,12 +115,22 @@ spaceguard uninstall --keep-agents-rule
 spaceguard detect --json
 spaceguard windows --json
 spaceguard assert --app "Google Chrome"
+spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
+spaceguard bind --desktop 3
 spaceguard setup-codex
 spaceguard uninstall
 spaceguard menubar
 ```
 
 `detect --json` is the main command for Codex rules. It writes the latest detection to `~/.spaceguard/last-detection.json`.
+
+When multiple Codex windows are open and SpaceGuard cannot find a current thread/window hint, detection stops instead of guessing from the current macOS main window. If a previous high-confidence detection for the same thread is still available, SpaceGuard returns it as `cached-high`.
+
+If the user explicitly identifies the correct Desktop for the current thread, bind it manually:
+
+```sh
+spaceguard bind --desktop 3
+```
 
 Example:
 
@@ -129,6 +155,7 @@ Add a rule like this to your Codex instructions:
 Before using Computer Use or Chrome automation, run `spaceguard detect --json`.
 Only operate in the detected `space.desktopName` when `confidence` is `high` or `cached-high`.
 If detection fails or confidence is lower than that, do not operate existing windows from another Space; ask the user or create a new window only after the target Space is clear.
+When opening a new Chrome URL, prefer `spaceguard open-url --app "Google Chrome" <url>` over Codex Chrome Extension `tabs.new()` because the extension may create a tab in a Chrome window from another macOS Space.
 ```
 
 ## Codex plugin

@@ -28,6 +28,7 @@
     "websiteURL": "https://github.com/soichiro-nitta/spaceguard",
     "defaultPrompt": [
       "Check the current Space before using Chrome.",
+      "Open a URL in the Chrome window on this Codex thread's Desktop.",
       "List windows in this Codex thread's Desktop.",
       "Verify Computer Use stays in this Space."
     ],
