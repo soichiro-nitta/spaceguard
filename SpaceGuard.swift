@@ -298,6 +298,27 @@ enum SpaceGuardCore {
         return try? JSONDecoder().decode(LastDetection.self, from: data)
     }
 
+    static func currentThreadId() -> String? {
+        let value = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
+        if let value, !value.isEmpty {
+            return value
+        }
+        return nil
+    }
+
+    static func loadCurrentThreadDetection() -> Result<LastDetection, DetectionError> {
+        guard let detection = loadLastDetection() else {
+            return .failure(DetectionError(message: "NG current thread has not been detected yet"))
+        }
+        guard let threadId = currentThreadId() else {
+            return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
+        }
+        guard detection.threadId == threadId else {
+            return .failure(DetectionError(message: "NG last detection belongs to another thread. expected=\(threadId) actual=\(detection.threadId). Run `spaceguard detect --json` in this thread before operating windows."))
+        }
+        return .success(detection)
+    }
+
     static func clearState() {
         try? FileManager.default.removeItem(at: stateURL)
     }
@@ -471,7 +492,11 @@ enum SpaceGuardCore {
     }
 
     static func assertText(app: String) -> (String, Int32) {
-        guard let detection = loadLastDetection() else {
+        let detectionResult = loadCurrentThreadDetection()
+        guard case .success(let detection) = detectionResult else {
+            if case .failure(let error) = detectionResult {
+                return (error.message, 1)
+            }
             return ("NG current thread has not been detected yet", 1)
         }
         guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
@@ -500,7 +525,11 @@ enum SpaceGuardCore {
         guard URL(string: url)?.scheme != nil else {
             return ("NG invalid URL: \(url)", 1)
         }
-        guard let detection = loadLastDetection() else {
+        let detectionResult = loadCurrentThreadDetection()
+        guard case .success(let detection) = detectionResult else {
+            if case .failure(let error) = detectionResult {
+                return (error.message, 1)
+            }
             return ("NG current thread has not been detected yet", 1)
         }
         guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
@@ -884,7 +913,8 @@ enum SpaceGuardCore {
     }
 
     static func userFacingCurrentThreadLines() -> [String] {
-        if let detection = loadLastDetection() {
+        let detectionResult = loadCurrentThreadDetection()
+        if case .success(let detection) = detectionResult {
             var lines = [
                 "状態: 検出済み \(detection.confidence == "high" ? "✓" : "△")",
                 "スレッド: \(detection.threadName ?? detection.threadId)",
@@ -897,6 +927,12 @@ enum SpaceGuardCore {
             }
             return lines
         } else {
+            if case .failure(let error) = detectionResult {
+                return [
+                    "状態: 未検出",
+                    error.message,
+                ]
+            }
             return [
                 "状態: 未検出",
                 "Codex側で spaceguard --cli detect-current-thread を実行してください",
@@ -905,7 +941,11 @@ enum SpaceGuardCore {
     }
 
     static func windowsForCurrentThreadText() -> String {
-        guard let detection = loadLastDetection() else {
+        let detectionResult = loadCurrentThreadDetection()
+        guard case .success(let detection) = detectionResult else {
+            if case .failure(let error) = detectionResult {
+                return error.message
+            }
             return "現在スレッドの作業場所はまだ検出されていません"
         }
         guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {
@@ -922,8 +962,13 @@ enum SpaceGuardCore {
     }
 
     static func windowsForLastDetectionJSON() -> Int32 {
-        guard let detection = loadLastDetection() else {
-            printJSON(ErrorPayload(ok: false, error: "current thread has not been detected yet"))
+        let detectionResult = loadCurrentThreadDetection()
+        guard case .success(let detection) = detectionResult else {
+            if case .failure(let error) = detectionResult {
+                printJSON(ErrorPayload(ok: false, error: error.message))
+            } else {
+                printJSON(ErrorPayload(ok: false, error: "current thread has not been detected yet"))
+            }
             return 1
         }
         guard let space = loadSpaces().first(where: { $0.uuid == detection.spaceUuid }) else {

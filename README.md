@@ -1,8 +1,10 @@
 # SpaceGuard
 
-SpaceGuardは、CodexやAIエージェントがChrome、Computer Use、Finder、エディタなどを操作するときに、**今のCodexスレッドがあるmacOSのデスクトップ内だけで作業する**ためのCLIです。
+SpaceGuardは、CodexがmacOSの別デスクトップにいるChromeやアプリをうっかり触らないようにするためのCLIです。
 
-複数プロジェクトをmacOSのデスクトップごとに分けていると、AIエージェントが別デスクトップのChromeやアプリを触ってしまうことがあります。SpaceGuardは、Codexの現在のスレッドがどのデスクトップにあるかを検出し、操作対象をそのデスクトップ内へ寄せるためのガードレールになります。
+たとえば、デスクトップ1は別プロジェクト、デスクトップ3は今のSpaceGuard作業、みたいに分けているとします。このときCodexに「Chromeで開いて」と頼むと、何もしないと別デスクトップのChromeにタブを作ってしまうことがあります。
+
+SpaceGuardは「このCodexスレッドはどのデスクトップにいるのか」を見て、ChromeやComputer Useの操作をそのデスクトップ内に閉じ込めるための小さなガードです。
 
 できることは、ざっくり以下です。
 
@@ -139,8 +141,11 @@ spaceguard assert --app "Google Chrome"
 ChromeでURLを開く場合は、Codex Chrome Extensionの`tabs.new()`よりもこちらを優先します。`tabs.new()`は別デスクトップのChromeウィンドウへタブを作ることがあるためです。
 
 ```sh
+spaceguard detect --json
 spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
 ```
+
+`open-url`、`assert`、`windows`は、現在の`CODEX_THREAD_ID`と最後の検出結果が一致している場合だけ動きます。別スレッドの検出結果が残っている場合は、その結果を使わず止まります。
 
 複数のCodexウィンドウがあり、自動検出が曖昧な場合は推測せず止まります。ユーザーが「このスレッドはデスクトップ3」と明示できる場合は、手動で固定できます。
 
