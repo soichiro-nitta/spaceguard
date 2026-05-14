@@ -36,8 +36,10 @@ brew install --HEAD spaceguard
 - `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. Use it only when it is reasonable for the current task, and prefer `spaceguard bind --desktop <n>` when the user can identify the correct Desktop.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
-- For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules.
-- Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
+- When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.
+- After `spaceguard open-url` succeeds, use Codex Chrome Extension `browser.user.openTabs()` to find the opened URL and `browser.user.claimTab(tab)` to continue automation in that tab.
+- For existing-tab selection, tab groups, finalization, and browser operation details after the target tab is claimed, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules.
+- Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle after the tab has been opened and claimed.
 - Do not run `open-url`, `assert`, or `windows` from a stale detection created by another Codex thread. If SpaceGuard reports a thread mismatch, run `spaceguard detect --json` in the current thread or stop.
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"` brings the matched Chrome window in the detected Desktop forward and activates the new tab. Use it only after the target Desktop has been detected.
 - After opening a Chrome URL, run `spaceguard windows` or `spaceguard assert --app "Google Chrome"` when practical to confirm the target Desktop still contains the Chrome window.

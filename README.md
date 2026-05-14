@@ -149,6 +149,8 @@ spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spa
 
 `open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。`--activate`を付けると、対象デスクトップ内のChromeウィンドウを前面化し、新しく作ったタブをアクティブにします。
 
+Codex Chrome Extensionで続けて操作する場合は、`open-url`で開いたURLを`browser.user.openTabs()`から探し、`browser.user.claimTab(tab)`で掴んでから操作します。ユーザーが別デスクトップのChromeを見ている可能性があるときは、最初にCodex Chrome Extensionの`browser.tabs.new()`を使わず、先に`spaceguard open-url`で対象デスクトップ内のChromeへURLを渡します。
+
 その後のタブ操作は、Codex Chrome Extension側のタブグループ運用やユーザーのグローバルルールに従います。SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChromeを誤って選びにくくするための補助ツールです。
 
 `open-url`、`assert`、`windows`は、現在の`CODEX_THREAD_ID`と最後の検出結果が一致している場合だけ動きます。別スレッドの検出結果が残っている場合は、その結果を使わず止まります。
