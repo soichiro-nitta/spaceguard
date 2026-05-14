@@ -21,13 +21,13 @@ brew install --HEAD spaceguard
 ## Required Flow
 
 1. Run `spaceguard detect --json`.
-2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `cached-high`, or `fallback-active-space`.
+2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 3. Treat `space.desktopName` as the only target Desktop/Space for this turn.
 4. State the detected Desktop and confidence briefly before using Chrome or Computer Use.
 5. Before operating a named app when practical, run `spaceguard assert --app "<App Name>"`.
 6. If detection fails, confidence is lower, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
 7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
-8. If the user explicitly says which Desktop contains the current Codex thread, run `spaceguard bind --desktop <n>` and treat that manual binding as the target for this turn.
+8. Do not manually bind a Desktop. When detection is ambiguous, ask the user to bring the target Codex thread into view and run `spaceguard detect --json` again.
 9. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
 
 ## Command Map
@@ -37,15 +37,17 @@ brew install --HEAD spaceguard
 - `spaceguard assert --app "<App Name>"`: Use before touching an app. Confirms the app has a window in the detected Desktop.
 - `spaceguard open-url --app "Google Chrome" "<url>"`: Use to create a background Chrome tab in the detected Desktop.
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"`: Use only when foregrounding the target Chrome window is acceptable.
-- `spaceguard bind --desktop <n>`: Use when the user explicitly identifies the correct Desktop and automatic detection is ambiguous.
-- `spaceguard status`: Use to inspect the current saved detection or binding.
-- `spaceguard clear`: Use to discard stale saved state before a fresh detection.
+- `spaceguard status`: Use to inspect the current thread's saved target Space and detection state.
+- `spaceguard clear`: Use to discard the current thread's saved target Space and detection cache.
+- `spaceguard clear --all-stale`: Use to remove stale saved thread Spaces older than the retention window.
 
 ## Operating Rules
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
+- A `high` detection persists the current thread's target Space. Later `windows`, `assert`, and `open-url` prefer that saved thread Space.
+- `thread-bound` means SpaceGuard reused the saved target Space for the current Codex thread after confirming the saved Codex window still exists in that Space.
 - `cached-high` means SpaceGuard reused a `high` result from the same thread only after confirming the cached Codex window still exists in the same Desktop and the cache is recent. Treat it as the current thread's target Space, but re-run `detect` if the user says the Codex window moved.
-- `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. Use it only when it is reasonable for the current task, and prefer `spaceguard bind --desktop <n>` when the user can identify the correct Desktop.
+- `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. It is not persisted as the current thread's target Space.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.

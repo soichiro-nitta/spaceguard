@@ -116,9 +116,9 @@ spaceguard setup-codex --with-agents-rule --yes
 | `assert --app "<name>"` | 対象アプリを触る前 | 検出済みデスクトップ内に対象アプリのウィンドウがあるか確認する |
 | `open-url --app "Google Chrome" "<url>"` | ChromeでURLを開く時 | 検出済みデスクトップ内のChromeにバックグラウンドタブを作る |
 | `open-url --activate --app "Google Chrome" "<url>"` | 表示切り替えを許容して開く時 | 検出済みデスクトップ内のChromeを前面化し、新規タブをアクティブにする |
-| `bind --desktop <n>` | 自動検出が曖昧な時 | ユーザーが指定したデスクトップをこのスレッドの対象として固定する |
-| `status` | 現在の保持状態を見る時 | 最後の検出・固定状態を確認する |
-| `clear` | 検出状態を破棄したい時 | SpaceGuardの保持状態を消す |
+| `status` | 現在の保持状態を見る時 | スレッド別に保存された作業場所と検出状態を確認する |
+| `clear` | 現在スレッドの保存状態を破棄したい時 | スレッド別の作業場所と検出キャッシュを消す |
+| `clear --all-stale` | 古い保存状態を掃除したい時 | 最終使用から30日を超えたスレッド別保存を消す |
 
 Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome Extensionの`browser.tabs.new()`は、ユーザーが別デスクトップのChromeを見ているとそちらに開く可能性があるため、最初のタブ作成には使わない方針です。
 
@@ -176,13 +176,13 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 検出結果はスレッドごとに`~/.spaceguard/detections/<thread-id>.json`へ保存されます。`~/.spaceguard/last-detection.json`はメニューバー表示や互換用の最新検出として残しますが、`assert`、`windows`、`open-url`は現在の`CODEX_THREAD_ID`に対応するスレッド別ファイルを優先します。そのため、別のCodexスレッドが同時に`detect`しても、現在スレッドの検出結果を上書きしにくくなっています。
 
-`detect`がCodexウィンドウを直接特定できない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
+`detect`がCodexウィンドウを直接特定できない場合でも、同じスレッドで保存済みのCodexウィンドウが同じデスクトップに残っているときは`thread-bound`としてその結果を再利用します。
 
-複数のCodexウィンドウがあり、自動検出が曖昧な場合は推測せず止まります。ユーザーが「このスレッドはデスクトップ3」と明示できる場合は、手動で固定できます。
+スレッド別保存がない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
 
-```sh
-spaceguard bind --desktop 3
-```
+`confidence=high`で検出できた場合、SpaceGuardは`~/.spaceguard/thread-spaces/<thread-id>.json`へ現在スレッドの作業場所を自動保存します。`open-url`、`assert`、`windows`はこのスレッド別保存を優先します。`fallback-active-space`は現在表示中のデスクトップへ寄る可能性があるため、永続保存しません。
+
+複数のCodexウィンドウがあり、自動検出が曖昧な場合は推測せず止まります。対象スレッドのCodexウィンドウを表示してから、あらためて`detect`してください。
 
 ## 動作確認
 
@@ -217,7 +217,7 @@ Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard o
 
 Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `cached-high`, or `fallback-active-space`.
 
-If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop. If the user explicitly identifies the correct Desktop, run `spaceguard bind --desktop <n>` before continuing.
+If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 
 For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 ```

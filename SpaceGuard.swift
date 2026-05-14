@@ -9,12 +9,12 @@ func spaceGuardHomeDirectory() -> String {
     return NSHomeDirectory()
 }
 
-let stateURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
-    .appendingPathComponent(".spaceguard/state.json")
 let lastDetectionURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/last-detection.json")
 let detectionsDirectoryURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/detections")
+let threadSpacesDirectoryURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
+    .appendingPathComponent(".spaceguard/thread-spaces")
 let pluginInstallURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent("plugins/spaceguard")
 let pluginSkillName = "spaceguard-safe-desktop-operation"
@@ -23,6 +23,7 @@ let marketplaceURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
 let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".codex/AGENTS.md")
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
+let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
 let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleBlock = """
@@ -31,20 +32,13 @@ let spaceGuardRuleBlock = """
 
 Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard only to identify the target macOS Desktop/Space for this Codex thread.
 
-Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `cached-high`, or `fallback-active-space`.
+Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 
-If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop. If the user explicitly identifies the correct Desktop, run `spaceguard bind --desktop <n>` before continuing.
+If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 
 For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 \(spaceGuardRuleEnd)
 """
-
-struct BoundState: Codable {
-    let windowId: Int
-    let spaceUuid: String
-    let spaceId: Int?
-    let boundAt: String
-}
 
 struct WindowInfo {
     let id: Int
@@ -157,6 +151,19 @@ struct LastDetection: Codable {
     let detectedAt: String
 }
 
+struct ThreadSpaceBinding: Codable {
+    let threadId: String
+    let threadName: String?
+    let electronWindowId: String?
+    let cgWindowId: Int
+    let desktopIndex: Int?
+    let internalSpaceId: Int?
+    let spaceUuid: String
+    let codexWindowsInSpace: Int
+    let createdAt: String
+    let lastUsedAt: String
+}
+
 enum SpaceGuardCore {
     static func loadSpaces() -> [SpaceInfo] {
         loadSpacesSnapshot().spaces
@@ -264,26 +271,8 @@ enum SpaceGuardCore {
         return windows
     }
 
-    static func loadState() -> BoundState? {
-        guard let data = try? Data(contentsOf: stateURL) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(BoundState.self, from: data)
-    }
-
-    static func saveState(_ state: BoundState) {
-        try? FileManager.default.createDirectory(
-            at: stateURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(state) {
-            try? data.write(to: stateURL)
-        }
-    }
-
     static func saveLastDetection(_ detection: DetectionResult) {
+        cleanupStaleThreadSpaces()
         try? FileManager.default.createDirectory(
             at: lastDetectionURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -311,6 +300,9 @@ enum SpaceGuardCore {
             )
             try? data.write(to: detectionURL(threadId: detection.threadId))
         }
+        if detection.confidence == "high" {
+            saveThreadSpaceBinding(detection)
+        }
     }
 
     static func loadLastDetection() -> LastDetection? {
@@ -322,6 +314,10 @@ enum SpaceGuardCore {
 
     static func detectionURL(threadId: String) -> URL {
         detectionsDirectoryURL.appendingPathComponent("\(safeFileName(threadId)).json")
+    }
+
+    static func threadSpaceURL(threadId: String) -> URL {
+        threadSpacesDirectoryURL.appendingPathComponent("\(safeFileName(threadId)).json")
     }
 
     static func safeFileName(_ value: String) -> String {
@@ -342,6 +338,122 @@ enum SpaceGuardCore {
         return nil
     }
 
+    static func saveThreadSpaceBinding(_ detection: DetectionResult) {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let existing = loadThreadSpaceBinding(threadId: detection.threadId, updateLastUsedAt: false)
+        let binding = ThreadSpaceBinding(
+            threadId: detection.threadId,
+            threadName: detection.threadName,
+            electronWindowId: detection.electronWindowId,
+            cgWindowId: detection.window.id,
+            desktopIndex: detection.space.desktopIndex,
+            internalSpaceId: detection.space.id,
+            spaceUuid: detection.space.uuid,
+            codexWindowsInSpace: detection.codexWindowsInSpace,
+            createdAt: existing?.createdAt ?? now,
+            lastUsedAt: now
+        )
+        try? FileManager.default.createDirectory(
+            at: threadSpacesDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(binding) {
+            try? data.write(to: threadSpaceURL(threadId: detection.threadId))
+        }
+    }
+
+    static func loadThreadSpaceBinding(
+        threadId: String,
+        updateLastUsedAt: Bool = true
+    ) -> ThreadSpaceBinding? {
+        cleanupStaleThreadSpaces()
+        guard
+            let data = try? Data(contentsOf: threadSpaceURL(threadId: threadId)),
+            let binding = try? JSONDecoder().decode(ThreadSpaceBinding.self, from: data),
+            !isStaleThreadSpace(binding)
+        else {
+            return nil
+        }
+        if updateLastUsedAt {
+            touchThreadSpaceBinding(binding)
+        }
+        return binding
+    }
+
+    static func touchThreadSpaceBinding(_ binding: ThreadSpaceBinding) {
+        let updated = ThreadSpaceBinding(
+            threadId: binding.threadId,
+            threadName: binding.threadName,
+            electronWindowId: binding.electronWindowId,
+            cgWindowId: binding.cgWindowId,
+            desktopIndex: binding.desktopIndex,
+            internalSpaceId: binding.internalSpaceId,
+            spaceUuid: binding.spaceUuid,
+            codexWindowsInSpace: binding.codexWindowsInSpace,
+            createdAt: binding.createdAt,
+            lastUsedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(updated) {
+            try? data.write(to: threadSpaceURL(threadId: binding.threadId))
+        }
+    }
+
+    static func isStaleThreadSpace(_ binding: ThreadSpaceBinding) -> Bool {
+        guard let lastUsedAt = ISO8601DateFormatter().date(from: binding.lastUsedAt) else {
+            return true
+        }
+        return Date().timeIntervalSince(lastUsedAt) > threadSpaceMaxAgeSeconds
+    }
+
+    static func cleanupStaleThreadSpaces() {
+        guard
+            let urls = try? FileManager.default.contentsOfDirectory(
+                at: threadSpacesDirectoryURL,
+                includingPropertiesForKeys: nil
+            )
+        else {
+            return
+        }
+        for url in urls where url.pathExtension == "json" {
+            guard
+                let data = try? Data(contentsOf: url),
+                let binding = try? JSONDecoder().decode(ThreadSpaceBinding.self, from: data)
+            else {
+                try? FileManager.default.removeItem(at: url)
+                continue
+            }
+            if isStaleThreadSpace(binding) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    static func clearCurrentThreadState() {
+        if let threadId = currentThreadId() {
+            try? FileManager.default.removeItem(at: detectionURL(threadId: threadId))
+            try? FileManager.default.removeItem(at: threadSpaceURL(threadId: threadId))
+        }
+    }
+
+    static func lastDetection(from binding: ThreadSpaceBinding) -> LastDetection {
+        LastDetection(
+            confidence: "thread-bound",
+            threadId: binding.threadId,
+            threadName: binding.threadName,
+            electronWindowId: binding.electronWindowId,
+            cgWindowId: binding.cgWindowId,
+            desktopIndex: binding.desktopIndex,
+            internalSpaceId: binding.internalSpaceId,
+            spaceUuid: binding.spaceUuid,
+            codexWindowsInSpace: binding.codexWindowsInSpace,
+            detectedAt: binding.lastUsedAt
+        )
+    }
+
     static func currentThreadId() -> String? {
         let value = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if let value, !value.isEmpty {
@@ -354,6 +466,9 @@ enum SpaceGuardCore {
         guard let threadId = currentThreadId() else {
             return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
         }
+        if let binding = loadThreadSpaceBinding(threadId: threadId) {
+            return .success(lastDetection(from: binding))
+        }
         guard let detection = loadDetection(threadId: threadId) else {
             return .failure(DetectionError(message: "NG current thread has not been detected yet"))
         }
@@ -361,14 +476,6 @@ enum SpaceGuardCore {
             return .failure(DetectionError(message: "NG last detection belongs to another thread. expected=\(threadId) actual=\(detection.threadId). Run `spaceguard detect --json` in this thread before operating windows."))
         }
         return .success(detection)
-    }
-
-    static func clearState() {
-        try? FileManager.default.removeItem(at: stateURL)
-    }
-
-    static func boundSpace(spaces: [SpaceInfo], state: BoundState) -> SpaceInfo? {
-        spaces.first { $0.uuid == state.spaceUuid }
     }
 
     static func displayName(_ window: WindowInfo) -> String {
@@ -429,106 +536,40 @@ enum SpaceGuardCore {
         return "Space \(spaceId.map(String.init) ?? "?")"
     }
 
-    static func bindCodex() -> String {
-        let spaces = loadSpaces()
-        let windows = loadWindows()
-        let candidates = spaces.flatMap { space in
-            space.windows.compactMap { id -> (SpaceInfo, WindowInfo)? in
-                guard
-                    let window = windows[id],
-                    window.owner == "Codex",
-                    window.layer == 0,
-                    window.width > 200,
-                    window.height > 200
-                else {
-                    return nil
-                }
-                return (space, window)
-            }
-        }
-
-        guard let selected = candidates.max(by: { $0.1.width * $0.1.height < $1.1.width * $1.1.height }) else {
-            return "NG Codex window not found"
-        }
-
-        let state = BoundState(
-            windowId: selected.1.id,
-            spaceUuid: selected.0.uuid,
-            spaceId: selected.0.id,
-            boundAt: ISO8601DateFormatter().string(from: Date())
-        )
-        saveState(state)
-        return "OK bound \(displayName(selected.1)) \(spaceLabel(selected.0)) internalSpace=\(selected.0.id.map(String.init) ?? "?")"
-    }
-
-    static func bindDesktop(index: Int, threadId: String?) -> (String, Int32) {
-        guard let threadId, !threadId.isEmpty else {
-            return ("NG CODEX_THREAD_ID is missing", 1)
-        }
-        let spaces = loadSpaces()
-        let windows = loadWindows()
-        guard let space = spaces.first(where: { $0.desktopIndex == index }) else {
-            return ("NG デスクトップ\(index) was not found", 1)
-        }
-        guard let window = space.windows.compactMap({ windows[$0] }).first(where: {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }) else {
-            return ("NG no Codex window in \(spaceLabel(space))", 1)
-        }
-        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
-        saveLastDetection(DetectionResult(
-            confidence: "high",
-            threadId: threadId,
-            threadName: currentThreadName(threadId: threadId),
-            electronWindowId: "manual-desktop-\(index)",
-            window: window,
-            space: space,
-            codexWindowsInSpace: codexCountInSpace
-        ))
-        return ("OK manually bound thread=\(threadId) to \(spaceLabel(space))\n\(displayName(window))", 0)
-    }
-
     static func statusText() -> String {
-        guard let state = loadState() else {
-            return "UNBOUND"
+        cleanupStaleThreadSpaces()
+        guard let threadId = currentThreadId() else {
+            return "UNBOUND CODEX_THREAD_ID is missing"
         }
-        let spaces = loadSpaces()
-        let windows = loadWindows()
-        let space = boundSpace(spaces: spaces, state: state)
-        let stale = space?.windows.contains(state.windowId) == true ? "OK" : "STALE"
-        var lines = ["\(stale) \(stateSpaceLabel(spaceId: state.spaceId, uuid: state.spaceUuid)) internalSpace=\(state.spaceId.map(String.init) ?? "?") uuid=\(state.spaceUuid) window=\(state.windowId) boundAt=\(state.boundAt)"]
-        if let window = windows[state.windowId] {
-            lines.append(displayName(window))
+        if let binding = loadThreadSpaceBinding(threadId: threadId, updateLastUsedAt: false) {
+            let spaceLabel = stateSpaceLabel(spaceId: binding.internalSpaceId, uuid: binding.spaceUuid)
+            return [
+                "OK thread-bound \(spaceLabel) internalSpace=\(binding.internalSpaceId.map(String.init) ?? "?") uuid=\(binding.spaceUuid)",
+                "thread=\(binding.threadName ?? binding.threadId)",
+                "window=\(binding.cgWindowId) createdAt=\(binding.createdAt) lastUsedAt=\(binding.lastUsedAt)",
+            ].joined(separator: "\n")
         }
-        return lines.joined(separator: "\n")
-    }
-
-    static func windowsText() -> String {
-        guard let state = loadState(), let space = boundSpace(spaces: loadSpaces(), state: state) else {
-            return "UNBOUND"
+        guard let detection = loadDetection(threadId: threadId) else {
+            return "UNBOUND thread=\(threadId)"
         }
-        let windows = loadWindows()
-        var lines = ["\(spaceLabel(space)) internalSpace=\(space.id.map(String.init) ?? "?") \(space.uuid)"]
-        for id in space.windows {
-            if let window = windows[id], window.layer == 0 {
-                lines.append(displayName(window))
-            }
-        }
-        return lines.joined(separator: "\n")
+        let spaceLabel = stateSpaceLabel(spaceId: detection.internalSpaceId, uuid: detection.spaceUuid)
+        return [
+            "OK detection \(spaceLabel) internalSpace=\(detection.internalSpaceId.map(String.init) ?? "?") uuid=\(detection.spaceUuid)",
+            "thread=\(detection.threadName ?? detection.threadId)",
+            "confidence=\(detection.confidence) window=\(detection.cgWindowId) detectedAt=\(detection.detectedAt)",
+        ].joined(separator: "\n")
     }
 
     static func allSpacesText() -> String {
         let spaces = loadSpaces()
         let windows = loadWindows()
-        let state = loadState()
+        let binding = currentThreadId().flatMap { loadThreadSpaceBinding(threadId: $0, updateLastUsedAt: false) }
         if spaces.isEmpty {
             return "No Spaces found"
         }
 
         return spaces.map { space in
-            let marker = state?.spaceUuid == space.uuid ? "*" : " "
+            let marker = binding?.spaceUuid == space.uuid ? "*" : " "
             let visibleWindows = space.windows.compactMap { windows[$0] }.filter { $0.layer == 0 }
             let apps = Array(Set(visibleWindows.map(\.owner))).sorted().joined(separator: ", ")
             return "\(marker) \(spaceLabel(space)) windows=\(visibleWindows.count) \(apps)"
@@ -548,7 +589,7 @@ enum SpaceGuardCore {
         }
         let windows = loadWindows()
         if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
-            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Bring the target Codex thread into view, then run `spaceguard clear` and `spaceguard detect --json` again.", 1)
         }
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
@@ -578,7 +619,7 @@ enum SpaceGuardCore {
         }
         let windows = loadWindows()
         if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
-            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Bring the target Codex thread into view, then run `spaceguard clear` and `spaceguard detect --json` again.", 1)
         }
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
@@ -976,6 +1017,9 @@ enum SpaceGuardCore {
         windows: [Int: WindowInfo],
         failureReason: String
     ) -> Result<DetectionResult, DetectionError> {
+        if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
+            return .success(bound)
+        }
         if let cached = cachedDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
             return .success(cached)
         }
@@ -1039,6 +1083,37 @@ enum SpaceGuardCore {
             threadId: cached.threadId,
             threadName: cached.threadName,
             electronWindowId: cached.electronWindowId,
+            window: window,
+            space: space,
+            codexWindowsInSpace: codexCountInSpace
+        )
+    }
+
+    static func threadSpaceDetectionResult(
+        threadId: String,
+        spaces: [SpaceInfo],
+        windows: [Int: WindowInfo]
+    ) -> DetectionResult? {
+        guard
+            let binding = loadThreadSpaceBinding(threadId: threadId),
+            let space = spaces.first(where: { $0.uuid == binding.spaceUuid }),
+            space.windows.contains(binding.cgWindowId),
+            let window = windows[binding.cgWindowId],
+            window.owner == "Codex",
+            window.layer == 0,
+            window.width > 200,
+            window.height > 200
+        else {
+            return nil
+        }
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        return DetectionResult(
+            confidence: "thread-bound",
+            threadId: binding.threadId,
+            threadName: binding.threadName,
+            electronWindowId: binding.electronWindowId,
             window: window,
             space: space,
             codexWindowsInSpace: codexCountInSpace
@@ -1564,8 +1639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(action("表示を更新", #selector(refreshAction)))
-        menu.addItem(action("手動で現在のCodexウィンドウを固定", #selector(bindCodex)))
-        menu.addItem(action("手動固定を解除", #selector(clearBind)))
+        menu.addItem(action("現在スレッドの保存状態を解除", #selector(clearCurrentThread)))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(action("Quit SpaceGuard", #selector(quit)))
         return menu
@@ -1589,18 +1663,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func bindCodex() {
-        let result = SpaceGuardCore.bindCodex()
-        refresh()
-        showAlert(result)
-    }
-
     @objc private func refreshAction() {
         refresh()
     }
 
-    @objc private func clearBind() {
-        SpaceGuardCore.clearState()
+    @objc private func clearCurrentThread() {
+        SpaceGuardCore.clearCurrentThreadState()
         refresh()
     }
 
@@ -1617,13 +1685,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -1639,23 +1707,8 @@ func runCLI(arguments: [String]) {
         print(result.0)
         exit(result.1)
     case "bind":
-        if
-            let desktopIndex = arguments.firstIndex(of: "--desktop"),
-            arguments.indices.contains(desktopIndex + 1),
-            let index = Int(arguments[desktopIndex + 1])
-        {
-            var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
-            if
-                let index = arguments.firstIndex(of: "--thread-id"),
-                arguments.indices.contains(index + 1)
-            {
-                threadId = arguments[index + 1]
-            }
-            let result = SpaceGuardCore.bindDesktop(index: index, threadId: threadId)
-            print(result.0)
-            exit(result.1)
-        }
-        print(SpaceGuardCore.bindCodex())
+        print("NG bind is deprecated. Run `spaceguard detect --json` from the target Codex thread; high-confidence detection is persisted automatically.")
+        exit(2)
     case "status":
         print(SpaceGuardCore.statusText())
     case "windows":
@@ -1715,10 +1768,15 @@ func runCLI(arguments: [String]) {
             keepAgentsRule: arguments.contains("--keep-agents-rule")
         )))
     case "clear":
-        SpaceGuardCore.clearState()
-        print("OK cleared")
+        if arguments.contains("--all-stale") {
+            SpaceGuardCore.cleanupStaleThreadSpaces()
+            print("OK cleared stale thread bindings")
+        } else {
+            SpaceGuardCore.clearCurrentThreadState()
+            print("OK cleared current thread")
+        }
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|bind [--desktop <n>]|status|clear")
+        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
         exit(2)
     }
 }
