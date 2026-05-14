@@ -124,6 +124,8 @@ Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome 
 
 SpaceGuardは、対象デスクトップ内のChromeへURLを開くところまでを担当します。その後のタブ取得、タブ操作、タブグループ、クリーンアップはCodex Chrome ExtensionやChromeスキル側の責務として扱います。
 
+`detect`、`windows`、`assert`、`open-url`は、同じスレッドの検出状態を読み書きします。これらは並列実行せず、`detect -> assert/windows/open-url`のように順番に実行してください。
+
 現在のCodexスレッドがあるデスクトップを検出します。
 
 ```sh

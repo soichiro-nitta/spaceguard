@@ -28,6 +28,7 @@ brew install --HEAD spaceguard
 6. If detection fails, confidence is lower, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
 7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
 8. If the user explicitly says which Desktop contains the current Codex thread, run `spaceguard bind --desktop <n>` and treat that manual binding as the target for this turn.
+9. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
 
 ## Command Map
 
