@@ -122,7 +122,7 @@ spaceguard setup-codex --with-agents-rule --yes
 
 Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome Extensionの`browser.tabs.new()`は、ユーザーが別デスクトップのChromeを見ているとそちらに開く可能性があるため、最初のタブ作成には使わない方針です。
 
-`Codex`タブグループへ入れたい場合は、`open-url`で対象デスクトップ内のChromeへURLを開いたあと、Codex Chrome Extension側で`browser.nameSession("Codex")`を設定してから`browser.user.claimTab(tab)`します。`open-url`単体はChromeのタブグループを直接作成しません。タブグループへの移動はCodex Chrome Extensionのclaim処理に任せます。
+Codex Chrome Extensionでそのタブを操作したい場合は、`open-url`で対象デスクトップ内のChromeへURLを開いたあと、Codex Chrome Extension側で`browser.user.claimTab(tab)`します。`open-url`単体はChromeのタブグループを直接作成しません。タブグループへの移動はCodex Chrome Extension側の挙動であり、SpaceGuardの成功条件にはしません。
 
 現在のCodexスレッドがあるデスクトップを検出します。
 
@@ -182,6 +182,8 @@ const tab = await browser.user.claimTab(target);
 `browser.nameSession("Codex")`をclaim前に実行すると、Codex Chrome Extension側のタブ整理が`Codex`名に寄りやすくなります。ただし、タブグループ作成や移動はCodex Chrome Extension側の挙動であり、SpaceGuardは保証しません。`browser.nameSession("tabekura商品詳細")`のようなタスク名を使うと、その名前のタブグループへ移ることがあります。
 
 この時点で、claimしたタブはCodex Chrome Extension側の操作対象になります。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、その後のタブ取得、タブグループ化、操作対象化はCodex Chrome Extension側で行います。
+
+claim後に続けて操作する場合は、`spaceguard assert --app "Google Chrome"`または`spaceguard windows --json`で、対象デスクトップにChromeウィンドウが残っていることを確認します。もしclaim後にタブやウィンドウが別デスクトップへ移った疑いがある場合は、そのタブでの操作を止め、claim前後の状態を記録して報告します。
 
 `spaceguard open-url`が成功しただけでは、Codex Chrome Extensionの操作対象になったことにはなりません。ただし、ユーザーへ画面を見せることが目的なら、claimやタブグループ化を完了条件にしません。CodexがDOM確認、スクリーンショット、クリック操作などを続ける場合だけclaimします。`browser.user.openTabs()`や`browser.user.claimTab(tab)`相当の機能が使えない場合は、正しいSpaceに開けたことだけを報告し、追加操作は未完了として止めます。
 

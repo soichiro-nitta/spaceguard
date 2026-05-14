@@ -56,6 +56,8 @@ brew install --HEAD spaceguard
 - Keep current verification tabs open when they are still useful for the user or the next operation. Prefer cleanup at the start of the next URL-opening flow, not immediately after every operation.
 - If cleanup is ambiguous, leave the tab open.
 - After `spaceguard open-url` succeeds, use `browser.user.openTabs()` to find the opened URL and `browser.user.claimTab(tab)` only when you need to continue automation in that tab.
+- After claiming a tab for further automation, run `spaceguard assert --app "Google Chrome"` or `spaceguard windows --json` when practical. Confirm that a Chrome window still exists in the detected Desktop before clicking, typing, or taking screenshots.
+- If the claimed tab or Chrome window appears to have moved to a different Desktop, stop operating that tab. Record the URL, the claim step, and the post-claim SpaceGuard result, then report the mismatch instead of continuing.
 - Do not treat the Chrome claim step or tab-group placement as required when the user only asked to see the page.
 - If `browser.user.openTabs()`, `browser.user.claimTab(tab)`, or the equivalent Chrome browser-client capability is not available in the current turn, explicitly report that the URL was opened in the correct Space but additional browser automation is still pending.
 - When the Chrome claim capability is not exposed as a direct tool, load/use the Chrome skill and its browser-client path. In the Node REPL route this means importing the Chrome plugin `scripts/browser-client.mjs`, running `setupAtlasRuntime`, selecting the `Chrome` browser from `agent.browsers`, then using `chrome.user.openTabs()` and `chrome.user.claimTab(tab)`.
