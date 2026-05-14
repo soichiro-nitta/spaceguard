@@ -215,7 +215,7 @@ spaceguard open-url --activate --app "Google Chrome" "https://github.com/soichir
 ```md
 Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard only to identify the target macOS Desktop/Space for this Codex thread.
 
-Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `cached-high`, or `fallback-active-space`.
+Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 
