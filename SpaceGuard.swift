@@ -13,6 +13,8 @@ let stateURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/state.json")
 let lastDetectionURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".spaceguard/last-detection.json")
+let detectionsDirectoryURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
+    .appendingPathComponent(".spaceguard/detections")
 let pluginInstallURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent("plugins/spaceguard")
 let pluginSkillName = "spaceguard-safe-desktop-operation"
@@ -303,6 +305,11 @@ enum SpaceGuardCore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(payload) {
             try? data.write(to: lastDetectionURL)
+            try? FileManager.default.createDirectory(
+                at: detectionsDirectoryURL,
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: detectionURL(threadId: detection.threadId))
         }
     }
 
@@ -311,6 +318,28 @@ enum SpaceGuardCore {
             return nil
         }
         return try? JSONDecoder().decode(LastDetection.self, from: data)
+    }
+
+    static func detectionURL(threadId: String) -> URL {
+        detectionsDirectoryURL.appendingPathComponent("\(safeFileName(threadId)).json")
+    }
+
+    static func safeFileName(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return String(value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" })
+    }
+
+    static func loadDetection(threadId: String) -> LastDetection? {
+        if
+            let data = try? Data(contentsOf: detectionURL(threadId: threadId)),
+            let detection = try? JSONDecoder().decode(LastDetection.self, from: data)
+        {
+            return detection
+        }
+        if let detection = loadLastDetection(), detection.threadId == threadId {
+            return detection
+        }
+        return nil
     }
 
     static func currentThreadId() -> String? {
@@ -322,11 +351,11 @@ enum SpaceGuardCore {
     }
 
     static func loadCurrentThreadDetection() -> Result<LastDetection, DetectionError> {
-        guard let detection = loadLastDetection() else {
-            return .failure(DetectionError(message: "NG current thread has not been detected yet"))
-        }
         guard let threadId = currentThreadId() else {
             return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
+        }
+        guard let detection = loadDetection(threadId: threadId) else {
+            return .failure(DetectionError(message: "NG current thread has not been detected yet"))
         }
         guard detection.threadId == threadId else {
             return .failure(DetectionError(message: "NG last detection belongs to another thread. expected=\(threadId) actual=\(detection.threadId). Run `spaceguard detect --json` in this thread before operating windows."))
@@ -518,11 +547,8 @@ enum SpaceGuardCore {
             return ("NG last detected Space was not found", 1)
         }
         let windows = loadWindows()
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
-        if detection.electronWindowId == nil && totalCodexWindows > 1 {
-            return ("NG last detection is ambiguous because multiple Codex windows are open and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+        if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
+            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
         }
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
@@ -551,11 +577,8 @@ enum SpaceGuardCore {
             return ("NG last detected Space was not found", 1)
         }
         let windows = loadWindows()
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
-        if detection.electronWindowId == nil && totalCodexWindows > 1 {
-            return ("NG last detection is ambiguous because multiple Codex windows are open and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
+        if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
+            return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Run `spaceguard detect --json` from the target Codex window or clear/rebind the target Space.", 1)
         }
         let matches = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
@@ -818,17 +841,13 @@ enum SpaceGuardCore {
     static func cachedDetectionText(threadId: String?) -> String? {
         guard
             let threadId,
-            let cached = loadLastDetection(),
-            cached.threadId == threadId,
+            let cached = loadDetection(threadId: threadId),
             let space = loadSpaces().first(where: { $0.uuid == cached.spaceUuid })
         else {
             return nil
         }
         let windows = loadWindows()
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
-        if cached.electronWindowId == nil && totalCodexWindows > 1 {
+        if cached.electronWindowId == nil && cached.codexWindowsInSpace > 1 {
             return nil
         }
         let title = windows[cached.cgWindowId].map(displayName) ?? "Codex #\(cached.cgWindowId)"
@@ -842,8 +861,7 @@ enum SpaceGuardCore {
     static func cachedDetectionPayload(threadId: String?) -> DetectionPayload? {
         guard
             let threadId,
-            let cached = loadLastDetection(),
-            cached.threadId == threadId,
+            let cached = loadDetection(threadId: threadId),
             let space = loadSpaces().first(where: { $0.uuid == cached.spaceUuid })
         else {
             return nil
@@ -859,10 +877,7 @@ enum SpaceGuardCore {
             width: 0,
             height: 0
         )
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
-        if cached.electronWindowId == nil && totalCodexWindows > 1 {
+        if cached.electronWindowId == nil && cached.codexWindowsInSpace > 1 {
             return nil
         }
         return DetectionPayload(
@@ -1003,8 +1018,7 @@ enum SpaceGuardCore {
         windows: [Int: WindowInfo]
     ) -> DetectionResult? {
         guard
-            let cached = loadLastDetection(),
-            cached.threadId == threadId,
+            let cached = loadDetection(threadId: threadId),
             cached.confidence == "high",
             isRecentDetection(cached, maxAge: highConfidenceCacheMaxAgeSeconds),
             let space = spaces.first(where: { $0.uuid == cached.spaceUuid }),
