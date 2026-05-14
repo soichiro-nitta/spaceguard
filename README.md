@@ -107,6 +107,21 @@ spaceguard setup-codex --with-agents-rule --yes
 
 ## 使い方
 
+### コマンド早見表
+
+| コマンド | 使う場面 | 役割 |
+| --- | --- | --- |
+| `detect --json` | 最初に必ず実行 | このCodexスレッドが属するデスクトップを検出する |
+| `windows --json` | 対象デスクトップの状態確認 | 検出済みデスクトップ内のウィンドウを一覧する |
+| `assert --app "<name>"` | 対象アプリを触る前 | 検出済みデスクトップ内に対象アプリのウィンドウがあるか確認する |
+| `open-url --app "Google Chrome" "<url>"` | ChromeでURLを開く時 | 検出済みデスクトップ内のChromeにバックグラウンドタブを作る |
+| `open-url --activate --app "Google Chrome" "<url>"` | 表示切り替えを許容して開く時 | 検出済みデスクトップ内のChromeを前面化し、新規タブをアクティブにする |
+| `bind --desktop <n>` | 自動検出が曖昧な時 | ユーザーが指定したデスクトップをこのスレッドの対象として固定する |
+| `status` | 現在の保持状態を見る時 | 最後の検出・固定状態を確認する |
+| `clear` | 検出状態を破棄したい時 | SpaceGuardの保持状態を消す |
+
+Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome Extensionの`browser.tabs.new()`は、ユーザーが別デスクトップのChromeを見ているとそちらに開く可能性があるため、最初のタブ作成には使わない方針です。
+
 現在のCodexスレッドがあるデスクトップを検出します。
 
 ```sh

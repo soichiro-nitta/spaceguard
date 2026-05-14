@@ -29,6 +29,17 @@ brew install --HEAD spaceguard
 7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
 8. If the user explicitly says which Desktop contains the current Codex thread, run `spaceguard bind --desktop <n>` and treat that manual binding as the target for this turn.
 
+## Command Map
+
+- `spaceguard detect --json`: Use first. Detects the Desktop/Space for the current Codex thread.
+- `spaceguard windows --json`: Use when you need to inspect windows in the detected Desktop.
+- `spaceguard assert --app "<App Name>"`: Use before touching an app. Confirms the app has a window in the detected Desktop.
+- `spaceguard open-url --app "Google Chrome" "<url>"`: Use to create a background Chrome tab in the detected Desktop.
+- `spaceguard open-url --activate --app "Google Chrome" "<url>"`: Use only when foregrounding the target Chrome window is acceptable.
+- `spaceguard bind --desktop <n>`: Use when the user explicitly identifies the correct Desktop and automatic detection is ambiguous.
+- `spaceguard status`: Use to inspect the current saved detection or binding.
+- `spaceguard clear`: Use to discard stale saved state before a fresh detection.
+
 ## Operating Rules
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
