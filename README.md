@@ -122,6 +122,8 @@ spaceguard setup-codex --with-agents-rule --yes
 
 Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome Extensionの`browser.tabs.new()`は、ユーザーが別デスクトップのChromeを見ているとそちらに開く可能性があるため、最初のタブ作成には使わない方針です。
 
+`Codex`タブグループへ入れたい場合は、`open-url`で対象デスクトップ内のChromeへURLを開いたあと、Codex Chrome Extension側で`browser.nameSession("Codex")`を設定してから`browser.user.claimTab(tab)`します。`open-url`単体はChromeのタブグループを直接作成しません。タブグループへの移動はCodex Chrome Extensionのclaim処理に任せます。
+
 現在のCodexスレッドがあるデスクトップを検出します。
 
 ```sh
@@ -165,6 +167,17 @@ spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spa
 `open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。`--activate`を付けると、対象デスクトップ内のChromeウィンドウを前面化し、新しく作ったタブをアクティブにします。
 
 Codex Chrome Extensionで続けて操作する場合は、`open-url`で開いたURLを`browser.user.openTabs()`から探し、`browser.user.claimTab(tab)`で掴んでから操作します。ユーザーが別デスクトップのChromeを見ている可能性があるときは、最初にCodex Chrome Extensionの`browser.tabs.new()`を使わず、先に`spaceguard open-url`で対象デスクトップ内のChromeへURLを渡します。
+
+`Codex`タブグループで管理する標準フローは次の通りです。
+
+```js
+await browser.nameSession("Codex");
+const tabs = await browser.user.openTabs();
+const target = tabs.find((tab) => tab.url?.includes("<opened-url-fragment>"));
+const tab = await browser.user.claimTab(target);
+```
+
+この時点で、claimしたタブはCodex Chrome Extension側の`Codex`タブグループへ移ります。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、タブグループ化はclaim後のCodex Chrome Extension側で行います。
 
 その後のタブ操作は、Codex Chrome Extension側のタブグループ運用やユーザーのグローバルルールに従います。SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChromeを誤って選びにくくするための補助ツールです。
 
