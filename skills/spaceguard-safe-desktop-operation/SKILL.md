@@ -54,7 +54,10 @@ brew install --HEAD spaceguard
 - Do not close user-owned tabs, tabs outside the `Codex` tab group, or tabs with active state such as unsaved input, login flow, comment draft, form submission, checkout, or authentication.
 - Keep current verification tabs open when they are still useful for the user or the next operation. Prefer cleanup at the start of the next URL-opening flow, not immediately after every operation.
 - If cleanup is ambiguous, leave the tab open.
-- After `spaceguard open-url` succeeds, use `browser.user.openTabs()` to find the opened URL and `browser.user.claimTab(tab)` to continue automation in that tab. Claiming moves the tab into the `Codex` tab group.
+- After `spaceguard open-url` succeeds, use `browser.user.openTabs()` to find the opened URL and `browser.user.claimTab(tab)` to continue automation in that tab. Claiming moves the tab into the `Codex` tab group, and creates the group when it does not exist yet.
+- Treat the Chrome claim step as part of the required Chrome-opening flow. Do not report the tab-group step as complete just because `spaceguard open-url` succeeded.
+- If `browser.user.openTabs()`, `browser.user.claimTab(tab)`, or the equivalent Chrome browser-client capability is not available in the current turn, explicitly report that the URL was opened in the correct Space but the `Codex` tab group claim step is still pending.
+- When the Chrome claim capability is unavailable, first load/use the Chrome skill and run its lightweight extension check. If the capability still is not available, stop rather than falling back to AppleScript or shell scripts for tab-group management.
 - `spaceguard open-url` itself does not create or manage Chrome tab groups. It only opens the URL in the Chrome window that belongs to the detected Desktop.
 - For existing-tab selection, tab groups, finalization, and browser operation details after the target tab is claimed, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules.
 - Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle after the tab has been opened and claimed.

@@ -177,7 +177,9 @@ const target = tabs.find((tab) => tab.url?.includes("<opened-url-fragment>"));
 const tab = await browser.user.claimTab(target);
 ```
 
-この時点で、claimしたタブはCodex Chrome Extension側の`Codex`タブグループへ移ります。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、タブグループ化はclaim後のCodex Chrome Extension側で行います。
+この時点で、claimしたタブはCodex Chrome Extension側の`Codex`タブグループへ移ります。`Codex`タブグループがまだ存在しない場合は、claim時に作られます。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、タブグループ化はclaim後のCodex Chrome Extension側で行います。
+
+`spaceguard open-url`が成功しただけでは、`Codex`タブグループへ入ったことにはなりません。Codex向けのChrome確認では、URLを正しいSpaceへ開いたあと、Codex Chrome Extensionで対象タブをclaimするところまでを一連の流れとして扱います。`browser.user.openTabs()`や`browser.user.claimTab(tab)`相当の機能が使えない場合は、正しいSpaceに開けたことだけを報告し、タブグループ化は未完了として止めます。
 
 `Codex`タブグループがすでにある場合は、新しいタブを開く前に既存タブを確認します。同じ対象URLや同じ確認対象があれば、まずそのタブを再利用します。
 
