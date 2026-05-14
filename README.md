@@ -179,7 +179,13 @@ const tab = await browser.user.claimTab(target);
 
 この時点で、claimしたタブはCodex Chrome Extension側の`Codex`タブグループへ移ります。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、タブグループ化はclaim後のCodex Chrome Extension側で行います。
 
-その後のタブ操作は、Codex Chrome Extension側のタブグループ運用やユーザーのグローバルルールに従います。SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChromeを誤って選びにくくするための補助ツールです。
+`Codex`タブグループがすでにある場合は、新しいタブを開く前に既存タブを確認します。同じ対象URLや同じ確認対象があれば、まずそのタブを再利用します。
+
+不要タブを整理する場合は、Codexが開いたと判断できる`Codex`タブグループ内のタブだけを対象にします。ユーザーの通常タブ、`Codex`タブグループ外のタブ、入力途中・ログイン途中・投稿前・決済前など状態を持つタブは閉じません。
+
+確認結果としてユーザーに見せるタブ、現在の実装確認に使うタブ、参照中のFigma / GitHub / localhostタブは残してよいです。次の作業開始時に再利用し、重複URL、空白タブ、読み込み失敗タブ、古い中間ページだけを必要最小限で整理します。迷う場合は閉じずに残します。
+
+SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChromeを誤って選びにくくするための補助ツールです。タブ取得、タブグループ作成、既存タブの再利用、不要タブ整理はCodex Chrome Extension側の運用として扱います。
 
 `open-url`、`assert`、`windows`は、現在の`CODEX_THREAD_ID`と最後の検出結果が一致している場合だけ動きます。別スレッドの検出結果が残っている場合は、その結果を使わず止まります。
 
