@@ -48,23 +48,9 @@ brew install --HEAD spaceguard
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.
-- If the task only asks to show a page to the user in the target Space, stop after `spaceguard open-url` succeeds. Do not claim that display tab with Codex Chrome Extension unless further automation is needed.
-- If further browser automation is needed after opening a new Chrome URL, set the Codex Chrome Extension session name to `Codex`, then use `browser.user.openTabs()` to inspect existing tabs.
-- If an existing tab has the same target URL or the same verification target, reuse that tab instead of opening a duplicate when it is safe.
-- If a new tab is still needed, clean up only clearly stale tabs that Codex created or can safely identify as disposable. Safe cleanup candidates are duplicate URLs, blank tabs, failed-load tabs, old intermediate pages, or tabs from a previous unrelated check.
-- Do not close user-owned tabs, tabs whose Codex ownership is unclear, or tabs with active state such as unsaved input, login flow, comment draft, form submission, checkout, or authentication.
-- Keep current verification tabs open when they are still useful for the user or the next operation. Prefer cleanup at the start of the next URL-opening flow, not immediately after every operation.
-- If cleanup is ambiguous, leave the tab open.
-- After `spaceguard open-url` succeeds, use `browser.user.openTabs()` to find the opened URL and `browser.user.claimTab(tab)` only when you need to continue automation in that tab.
-- After claiming a tab for further automation, run `spaceguard assert --app "Google Chrome"` or `spaceguard windows --json` when practical. Confirm that a Chrome window still exists in the detected Desktop before clicking, typing, or taking screenshots.
-- If the claimed tab or Chrome window appears to have moved to a different Desktop, stop operating that tab. Record the URL, the claim step, and the post-claim SpaceGuard result, then report the mismatch instead of continuing.
-- Do not treat the Chrome claim step or tab-group placement as required when the user only asked to see the page.
-- If `browser.user.openTabs()`, `browser.user.claimTab(tab)`, or the equivalent Chrome browser-client capability is not available in the current turn, explicitly report that the URL was opened in the correct Space but additional browser automation is still pending.
-- When the Chrome claim capability is not exposed as a direct tool, load/use the Chrome skill and its browser-client path. In the Node REPL route this means importing the Chrome plugin `scripts/browser-client.mjs`, running `setupAtlasRuntime`, selecting the `Chrome` browser from `agent.browsers`, then using `chrome.user.openTabs()` and `chrome.user.claimTab(tab)`.
-- If the Chrome skill or browser-client path still cannot expose `openTabs` / `claimTab`, stop rather than falling back to AppleScript or shell scripts for tab-group management.
-- `spaceguard open-url` itself does not create or manage Chrome tab groups. It only opens the URL in the Chrome window that belongs to the detected Desktop. Tab groups are a Codex Chrome Extension behavior and are not the success criterion for SpaceGuard.
-- For existing-tab selection, tab groups, finalization, and browser operation details after the target tab is claimed, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules.
-- Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle after the tab has been opened and claimed.
+- If the task only asks to show a page to the user in the target Space, stop after `spaceguard open-url` succeeds.
+- After `spaceguard open-url` succeeds, treat further tab selection, tab operation, tab groups, cleanup, DOM inspection, screenshots, clicks, and typing as Codex Chrome Extension or Chrome-skill responsibilities, not SpaceGuard responsibilities.
+- Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle after the URL has been opened.
 - Do not run `open-url`, `assert`, or `windows` from a stale detection created by another Codex thread. If SpaceGuard reports a thread mismatch, run `spaceguard detect --json` in the current thread or stop.
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"` brings the matched Chrome window in the detected Desktop forward and activates the new tab. Use it only after the target Desktop has been detected.
 - After opening a Chrome URL, run `spaceguard windows` or `spaceguard assert --app "Google Chrome"` when practical to confirm the target Desktop still contains the Chrome window.
