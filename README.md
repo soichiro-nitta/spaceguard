@@ -166,9 +166,11 @@ spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spa
 
 `open-url`は、デフォルトでは対象Chromeウィンドウへバックグラウンドタブを作ります。別デスクトップのChromeを前面化してSpace移動が起きることを避けるためです。タブをすぐアクティブにしたい場合だけ`--activate`を付けます。`--activate`を付けると、対象デスクトップ内のChromeウィンドウを前面化し、新しく作ったタブをアクティブにします。
 
-Codex Chrome Extensionで続けて操作する場合は、`open-url`で開いたURLを`browser.user.openTabs()`から探し、`browser.user.claimTab(tab)`で掴んでから操作します。ユーザーが別デスクトップのChromeを見ている可能性があるときは、最初にCodex Chrome Extensionの`browser.tabs.new()`を使わず、先に`spaceguard open-url`で対象デスクトップ内のChromeへURLを渡します。
+ユーザーに見せるためのURLは、原則として`open-url`で開いた時点で止めます。Codex Chrome Extensionの`browser.user.claimTab(tab)`は、そのタブをCodex側の操作対象へ移すため、ユーザーが見ている別デスクトップ側のChromeウィンドウや現在のセッションタブグループへ移動することがあります。
 
-`Codex`タブグループで管理する標準フローは次の通りです。
+Codex Chrome Extensionで続けて操作する場合だけ、`open-url`で開いたURLを`browser.user.openTabs()`から探し、`browser.user.claimTab(tab)`で掴んでから操作します。ユーザーが別デスクトップのChromeを見ている可能性があるときは、最初にCodex Chrome Extensionの`browser.tabs.new()`を使わず、先に`spaceguard open-url`で対象デスクトップ内のChromeへURLを渡します。
+
+Codexが続けて操作する場合の標準フローは次の通りです。
 
 ```js
 await browser.nameSession("Codex");
@@ -177,15 +179,17 @@ const target = tabs.find((tab) => tab.url?.includes("<opened-url-fragment>"));
 const tab = await browser.user.claimTab(target);
 ```
 
-この時点で、claimしたタブはCodex Chrome Extension側の`Codex`タブグループへ移ります。`Codex`タブグループがまだ存在しない場合は、claim時に作られます。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、タブグループ化はclaim後のCodex Chrome Extension側で行います。
+`browser.nameSession("Codex")`をclaim前に実行すると、Codex Chrome Extension側のタブ整理が`Codex`名に寄りやすくなります。ただし、タブグループ作成や移動はCodex Chrome Extension側の挙動であり、SpaceGuardは保証しません。`browser.nameSession("tabekura商品詳細")`のようなタスク名を使うと、その名前のタブグループへ移ることがあります。
 
-`spaceguard open-url`が成功しただけでは、`Codex`タブグループへ入ったことにはなりません。Codex向けのChrome確認では、URLを正しいSpaceへ開いたあと、Codex Chrome Extensionで対象タブをclaimするところまでを一連の流れとして扱います。`browser.user.openTabs()`や`browser.user.claimTab(tab)`相当の機能が使えない場合は、正しいSpaceに開けたことだけを報告し、タブグループ化は未完了として止めます。
+この時点で、claimしたタブはCodex Chrome Extension側の操作対象になります。`spaceguard open-url`は正しいデスクトップ内のChromeへ開くところまでを担当し、その後のタブ取得、タブグループ化、操作対象化はCodex Chrome Extension側で行います。
+
+`spaceguard open-url`が成功しただけでは、Codex Chrome Extensionの操作対象になったことにはなりません。ただし、ユーザーへ画面を見せることが目的なら、claimやタブグループ化を完了条件にしません。CodexがDOM確認、スクリーンショット、クリック操作などを続ける場合だけclaimします。`browser.user.openTabs()`や`browser.user.claimTab(tab)`相当の機能が使えない場合は、正しいSpaceに開けたことだけを報告し、追加操作は未完了として止めます。
 
 `openTabs`や`claimTab`が通常のツールとして見えない場合でも、Chromeプラグインのブラウザクライアント経由で使えることがあります。その場合はChromeスキルを読み、ブラウザクライアントを初期化して、`agent.browsers`から`Chrome`を選択したうえで`chrome.user.openTabs()`と`chrome.user.claimTab(tab)`を使います。それでもclaim機能が使えない場合は、AppleScriptやshellでタブグループを代替操作せず、未完了として止めます。
 
-`Codex`タブグループがすでにある場合は、新しいタブを開く前に既存タブを確認します。同じ対象URLや同じ確認対象があれば、まずそのタブを再利用します。
+既存タブを確認できる場合は、新しいタブを開く前に同じ対象URLや同じ確認対象がないか確認します。あれば、まずそのタブを再利用します。
 
-不要タブを整理する場合は、Codexが開いたと判断できる`Codex`タブグループ内のタブだけを対象にします。ユーザーの通常タブ、`Codex`タブグループ外のタブ、入力途中・ログイン途中・投稿前・決済前など状態を持つタブは閉じません。
+不要タブを整理する場合は、Codexが開いたと判断できるタブだけを対象にします。ユーザーの通常タブ、Codex由来か判断できないタブ、入力途中・ログイン途中・投稿前・決済前など状態を持つタブは閉じません。
 
 確認結果としてユーザーに見せるタブ、現在の実装確認に使うタブ、参照中のFigma / GitHub / localhostタブは残してよいです。次の作業開始時に再利用し、重複URL、空白タブ、読み込み失敗タブ、古い中間ページだけを必要最小限で整理します。迷う場合は閉じずに残します。
 
