@@ -181,6 +181,8 @@ const tab = await browser.user.claimTab(target);
 
 `spaceguard open-url`が成功しただけでは、`Codex`タブグループへ入ったことにはなりません。Codex向けのChrome確認では、URLを正しいSpaceへ開いたあと、Codex Chrome Extensionで対象タブをclaimするところまでを一連の流れとして扱います。`browser.user.openTabs()`や`browser.user.claimTab(tab)`相当の機能が使えない場合は、正しいSpaceに開けたことだけを報告し、タブグループ化は未完了として止めます。
 
+`openTabs`や`claimTab`が通常のツールとして見えない場合でも、Chromeプラグインのブラウザクライアント経由で使えることがあります。その場合はChromeスキルを読み、ブラウザクライアントを初期化して、`agent.browsers`から`Chrome`を選択したうえで`chrome.user.openTabs()`と`chrome.user.claimTab(tab)`を使います。それでもclaim機能が使えない場合は、AppleScriptやshellでタブグループを代替操作せず、未完了として止めます。
+
 `Codex`タブグループがすでにある場合は、新しいタブを開く前に既存タブを確認します。同じ対象URLや同じ確認対象があれば、まずそのタブを再利用します。
 
 不要タブを整理する場合は、Codexが開いたと判断できる`Codex`タブグループ内のタブだけを対象にします。ユーザーの通常タブ、`Codex`タブグループ外のタブ、入力途中・ログイン途中・投稿前・決済前など状態を持つタブは閉じません。
