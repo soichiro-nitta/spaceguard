@@ -84,6 +84,10 @@ struct DetectionPayload: Encodable {
 struct WindowsPayload: Encodable {
     let ok: Bool
     let source: String
+    let confidence: String
+    let threadId: String
+    let threadName: String?
+    let detectedAt: String
     let space: SpacePayload
     let windows: [WindowPayload]
 }
@@ -1202,7 +1206,11 @@ enum SpaceGuardCore {
         let windows = loadWindows()
         printJSON(WindowsPayload(
             ok: true,
-            source: "last-detection",
+            source: "current-thread-detection",
+            confidence: detection.confidence,
+            threadId: detection.threadId,
+            threadName: detection.threadName,
+            detectedAt: detection.detectedAt,
             space: spacePayload(space),
             windows: space.windows.compactMap { windows[$0] }
                 .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }

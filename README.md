@@ -153,6 +153,8 @@ spaceguard detect --json
 spaceguard windows --json
 ```
 
+`windows --json`は、参照した現在スレッドの`threadId`、`confidence`、`detectedAt`も返します。直前の`detect --json`と同じスレッド、同じデスクトップを見ているか確認できます。
+
 対象デスクトップ内にChromeがあるか確認します。
 
 ```sh
