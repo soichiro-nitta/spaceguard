@@ -23,12 +23,13 @@ brew install --HEAD spaceguard
 1. Run `spaceguard detect --json`.
 2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 3. Treat `space.desktopName` as the only target Desktop/Space for this turn.
-4. State the detected Desktop and confidence briefly before using Chrome or Computer Use.
-5. Before operating a named app when practical, run `spaceguard assert --app "<App Name>"`.
-6. If detection fails, confidence is lower, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
-7. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
-8. Do not manually bind a Desktop. When detection is ambiguous, ask the user to bring the target Codex thread into view and run `spaceguard detect --json` again.
-9. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
+4. When multiple Codex or Chrome windows may be open, run `spaceguard windows --json` after `detect --json` and confirm it reports the same `threadId`, same `space.desktopIndex`, and `source: "current-thread-detection"` or a clearly recent `source: "recent-last-detection"`.
+5. State the detected Desktop and confidence briefly before using Chrome or Computer Use.
+6. Before operating a named app when practical, run `spaceguard assert --app "<App Name>"`.
+7. If detection fails, confidence is lower, `windows --json` disagrees with `detect --json`, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
+8. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a `cached-high` result for the same thread or a `fallback-active-space` result is returned.
+9. Do not manually bind a Desktop. When detection is ambiguous, ask the user to bring the target Codex thread into view and run `spaceguard detect --json` again.
+10. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
 
 ## Command Map
 
@@ -46,11 +47,13 @@ brew install --HEAD spaceguard
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
 - A `high` detection persists the current thread's target Space. Later `windows`, `assert`, and `open-url` prefer that saved thread Space.
 - `thread-bound` means SpaceGuard reused the saved target Space for the current Codex thread after confirming the saved Codex window still exists in that Space.
+- With multiple Codex windows open, do not trust `thread-bound` by itself. Confirm `detect --json` and `windows --json` agree before touching Chrome or other desktop apps.
 - `cached-high` means SpaceGuard reused a `high` result from the same thread only after confirming the cached Codex window still exists in the same Desktop and the cache is recent. Treat it as the current thread's target Space, but re-run `detect` if the user says the Codex window moved.
 - `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. It is not persisted as the current thread's target Space.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.
+- When multiple Chrome windows are open, use `spaceguard open-url --app "Google Chrome" "<url>"` for the initial URL handoff so the URL lands in the Chrome window inside the detected Desktop.
 - If the task only asks to show a page to the user in the target Space, stop after `spaceguard open-url` succeeds.
 - After `spaceguard open-url` succeeds, treat further tab selection, tab operation, tab groups, cleanup, DOM inspection, screenshots, clicks, and typing as Codex Chrome Extension or Chrome-skill responsibilities, not SpaceGuard responsibilities.
 - Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle after the URL has been opened.
