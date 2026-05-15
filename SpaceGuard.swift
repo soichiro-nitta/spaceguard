@@ -946,6 +946,12 @@ enum SpaceGuardCore {
         let spaces = snapshot.spaces
         let windows = loadWindows()
         let electronId = latestCodexElectronWindowId(threadId: threadId)
+        if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
+            return .success(bound)
+        }
+        if let cached = cachedDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
+            return .success(cached)
+        }
         let totalCodexWindows = windows.values.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count

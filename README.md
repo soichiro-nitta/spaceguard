@@ -180,6 +180,8 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 `detect`がCodexウィンドウを直接特定できない場合でも、同じスレッドで保存済みのCodexウィンドウが同じデスクトップに残っているときは`thread-bound`としてその結果を再利用します。
 
+同じスレッドの`thread-bound`結果が有効な場合、`detect`もその結果を優先します。これにより、同じ`threadId`で`detect`と`windows`が別のデスクトップを返す状態を避けます。
+
 スレッド別保存がない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
 
 `confidence=high`で検出できた場合、SpaceGuardは`~/.spaceguard/thread-spaces/<thread-id>.json`へ現在スレッドの作業場所を自動保存します。`open-url`、`assert`、`windows`はこのスレッド別保存を優先します。`fallback-active-space`は現在表示中のデスクトップへ寄る可能性があるため、永続保存しません。
