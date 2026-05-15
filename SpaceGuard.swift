@@ -24,6 +24,8 @@ let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".codex/AGENTS.md")
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
+let currentDetectionSchemaVersion = 2
+let currentThreadSpaceSchemaVersion = 2
 let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleBlock = """
@@ -143,6 +145,7 @@ struct DetectionError: Error {
 }
 
 struct LastDetection: Codable {
+    let schemaVersion: Int?
     let confidence: String
     let threadId: String
     let threadName: String?
@@ -156,6 +159,7 @@ struct LastDetection: Codable {
 }
 
 struct ThreadSpaceBinding: Codable {
+    let schemaVersion: Int?
     let threadId: String
     let threadName: String?
     let electronWindowId: String?
@@ -283,6 +287,7 @@ enum SpaceGuardCore {
         )
         let storedConfidence = detection.confidence == "cached-high" ? "high" : detection.confidence
         let payload = LastDetection(
+            schemaVersion: currentDetectionSchemaVersion,
             confidence: storedConfidence,
             threadId: detection.threadId,
             threadName: detection.threadName,
@@ -313,7 +318,13 @@ enum SpaceGuardCore {
         guard let data = try? Data(contentsOf: lastDetectionURL) else {
             return nil
         }
-        return try? JSONDecoder().decode(LastDetection.self, from: data)
+        guard
+            let detection = try? JSONDecoder().decode(LastDetection.self, from: data),
+            detection.schemaVersion == currentDetectionSchemaVersion
+        else {
+            return nil
+        }
+        return detection
     }
 
     static func detectionURL(threadId: String) -> URL {
@@ -332,7 +343,8 @@ enum SpaceGuardCore {
     static func loadDetection(threadId: String) -> LastDetection? {
         if
             let data = try? Data(contentsOf: detectionURL(threadId: threadId)),
-            let detection = try? JSONDecoder().decode(LastDetection.self, from: data)
+            let detection = try? JSONDecoder().decode(LastDetection.self, from: data),
+            detection.schemaVersion == currentDetectionSchemaVersion
         {
             return detection
         }
@@ -346,6 +358,7 @@ enum SpaceGuardCore {
         let now = ISO8601DateFormatter().string(from: Date())
         let existing = loadThreadSpaceBinding(threadId: detection.threadId, updateLastUsedAt: false)
         let binding = ThreadSpaceBinding(
+            schemaVersion: currentThreadSpaceSchemaVersion,
             threadId: detection.threadId,
             threadName: detection.threadName,
             electronWindowId: detection.electronWindowId,
@@ -376,6 +389,7 @@ enum SpaceGuardCore {
         guard
             let data = try? Data(contentsOf: threadSpaceURL(threadId: threadId)),
             let binding = try? JSONDecoder().decode(ThreadSpaceBinding.self, from: data),
+            binding.schemaVersion == currentThreadSpaceSchemaVersion,
             !isStaleThreadSpace(binding)
         else {
             return nil
@@ -388,6 +402,7 @@ enum SpaceGuardCore {
 
     static func touchThreadSpaceBinding(_ binding: ThreadSpaceBinding) {
         let updated = ThreadSpaceBinding(
+            schemaVersion: currentThreadSpaceSchemaVersion,
             threadId: binding.threadId,
             threadName: binding.threadName,
             electronWindowId: binding.electronWindowId,
@@ -430,7 +445,7 @@ enum SpaceGuardCore {
                 try? FileManager.default.removeItem(at: url)
                 continue
             }
-            if isStaleThreadSpace(binding) {
+            if binding.schemaVersion != currentThreadSpaceSchemaVersion || isStaleThreadSpace(binding) {
                 try? FileManager.default.removeItem(at: url)
             }
         }
@@ -445,6 +460,7 @@ enum SpaceGuardCore {
 
     static func lastDetection(from binding: ThreadSpaceBinding) -> LastDetection {
         LastDetection(
+            schemaVersion: currentDetectionSchemaVersion,
             confidence: "thread-bound",
             threadId: binding.threadId,
             threadName: binding.threadName,
