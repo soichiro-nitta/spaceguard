@@ -973,12 +973,6 @@ enum SpaceGuardCore {
         let spaces = snapshot.spaces
         let windows = loadWindows()
         let electronId = latestCodexElectronWindowId(threadId: threadId)
-        if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
-            return .success(bound)
-        }
-        if let cached = cachedDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
-            return .success(cached)
-        }
         let totalCodexWindows = windows.values.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
@@ -1035,6 +1029,13 @@ enum SpaceGuardCore {
         let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
+        if
+            let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows),
+            bound.window.id == window.id,
+            bound.space.uuid == space.uuid
+        {
+            return .success(bound)
+        }
         return .success(DetectionResult(
             confidence: "high",
             threadId: threadId,
@@ -1054,10 +1055,13 @@ enum SpaceGuardCore {
         windows: [Int: WindowInfo],
         failureReason: String
     ) -> Result<DetectionResult, DetectionError> {
-        if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
+        let totalCodexWindows = windows.values.filter {
+            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
+        }.count
+        if totalCodexWindows <= 1, let bound = threadSpaceDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
             return .success(bound)
         }
-        if let cached = cachedDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
+        if totalCodexWindows <= 1, let cached = cachedDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
             return .success(cached)
         }
 
