@@ -23,6 +23,7 @@ let marketplaceURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
 let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".codex/AGENTS.md")
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
+let recentLastDetectionMaxAgeSeconds: TimeInterval = 60
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
 let currentDetectionSchemaVersion = 2
 let currentThreadSpaceSchemaVersion = 2
@@ -482,8 +483,8 @@ enum SpaceGuardCore {
         return nil
     }
 
-    static func loadCurrentThreadDetection() -> Result<LastDetection, DetectionError> {
-        guard let threadId = currentThreadId() else {
+    static func loadCurrentThreadDetection(threadId explicitThreadId: String? = nil) -> Result<LastDetection, DetectionError> {
+        guard let threadId = explicitThreadId ?? currentThreadId() else {
             return .failure(DetectionError(message: "NG CODEX_THREAD_ID is missing"))
         }
         if let binding = loadThreadSpaceBinding(threadId: threadId) {
@@ -496,6 +497,16 @@ enum SpaceGuardCore {
             return .failure(DetectionError(message: "NG last detection belongs to another thread. expected=\(threadId) actual=\(detection.threadId). Run `spaceguard detect --json` in this thread before operating windows."))
         }
         return .success(detection)
+    }
+
+    static func loadRecentLastDetection() -> LastDetection? {
+        guard
+            let detection = loadLastDetection(),
+            isRecentDetection(detection, maxAge: recentLastDetectionMaxAgeSeconds)
+        else {
+            return nil
+        }
+        return detection
     }
 
     static func displayName(_ window: WindowInfo) -> String {
@@ -1190,9 +1201,16 @@ enum SpaceGuardCore {
         }
     }
 
-    static func windowsForCurrentThreadText() -> (String, Int32) {
-        let detectionResult = loadCurrentThreadDetection()
-        guard case .success(let detection) = detectionResult else {
+    static func windowsForCurrentThreadText(threadId: String? = nil) -> (String, Int32) {
+        var detection: LastDetection?
+        let detectionResult = loadCurrentThreadDetection(threadId: threadId)
+        if case .success(let currentDetection) = detectionResult {
+            detection = currentDetection
+        }
+        if detection == nil {
+            detection = loadRecentLastDetection()
+        }
+        guard let detection else {
             if case .failure(let error) = detectionResult {
                 return (error.message, 1)
             }
@@ -1211,9 +1229,18 @@ enum SpaceGuardCore {
         return (lines.joined(separator: "\n"), 0)
     }
 
-    static func windowsForLastDetectionJSON() -> Int32 {
-        let detectionResult = loadCurrentThreadDetection()
-        guard case .success(let detection) = detectionResult else {
+    static func windowsForLastDetectionJSON(threadId: String? = nil) -> Int32 {
+        var source = "current-thread-detection"
+        var detection: LastDetection?
+        let detectionResult = loadCurrentThreadDetection(threadId: threadId)
+        if case .success(let currentDetection) = detectionResult {
+            detection = currentDetection
+        }
+        if detection == nil, let recentDetection = loadRecentLastDetection() {
+            source = "recent-last-detection"
+            detection = recentDetection
+        }
+        guard let detection else {
             if case .failure(let error) = detectionResult {
                 printJSON(ErrorPayload(ok: false, error: error.message))
             } else {
@@ -1228,7 +1255,7 @@ enum SpaceGuardCore {
         let windows = loadWindows()
         printJSON(WindowsPayload(
             ok: true,
-            source: "current-thread-detection",
+            source: source,
             confidence: detection.confidence,
             threadId: detection.threadId,
             threadName: detection.threadName,
@@ -1742,10 +1769,17 @@ func runCLI(arguments: [String]) {
     case "status":
         print(SpaceGuardCore.statusText())
     case "windows":
-        if arguments.contains("--json") {
-            exit(SpaceGuardCore.windowsForLastDetectionJSON())
+        var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
+        if
+            let index = arguments.firstIndex(of: "--thread-id"),
+            arguments.indices.contains(index + 1)
+        {
+            threadId = arguments[index + 1]
         }
-        let result = SpaceGuardCore.windowsForCurrentThreadText()
+        if arguments.contains("--json") {
+            exit(SpaceGuardCore.windowsForLastDetectionJSON(threadId: threadId))
+        }
+        let result = SpaceGuardCore.windowsForCurrentThreadText(threadId: threadId)
         print(result.0)
         exit(result.1)
     case "detect-current-thread":

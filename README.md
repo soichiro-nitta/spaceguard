@@ -155,6 +155,8 @@ spaceguard windows --json
 
 `windows --json`は、参照した現在スレッドの`threadId`、`confidence`、`detectedAt`も返します。直前の`detect --json`と同じスレッド、同じデスクトップを見ているか確認できます。
 
+`windows --json`は通常、現在の`CODEX_THREAD_ID`に紐づく検出結果を参照します。現在スレッドの検出結果が見つからない場合でも、直近60秒以内の`detect`結果があれば、診断用に`source: "recent-last-detection"`として返します。必要な場合は`windows --thread-id <id> --json`で参照するスレッドを明示できます。
+
 対象デスクトップ内にChromeがあるか確認します。
 
 ```sh
