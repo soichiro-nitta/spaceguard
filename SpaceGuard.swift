@@ -41,6 +41,12 @@ Run `spaceguard detect --json` and treat the detected `space.desktopName` as the
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 
+Before using Computer Use for a non-Chrome macOS app, run `spaceguard windows --json` and `spaceguard assert --app "<App Name>"` after `detect`. Continue only when the target app appears in the detected Space.
+
+After `get_app_state("<App Name>")`, continue with clicks, typing, scrolling, dragging, or `set_value` only if the visible window title or content can be matched to a window returned by `spaceguard windows --json` for the detected Space. If the same app has windows in multiple Spaces and the target Space cannot be confirmed, stop instead of operating the app.
+
+Re-run `spaceguard detect --json` at the start of every new assistant turn before using Computer Use. Do not rely on a previous turn's GUI state.
+
 For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 \(spaceGuardRuleEnd)
 """
