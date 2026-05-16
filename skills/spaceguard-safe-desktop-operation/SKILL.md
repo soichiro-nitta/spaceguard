@@ -46,6 +46,8 @@ brew install --HEAD spaceguard
 
 `assert --app` resolves the requested app against running app metadata as well as the CoreGraphics window owner. English names, localized names, bundle identifiers, `.app` names, and executable names are acceptable when the app is running. For example, `spaceguard assert --app "Calculator"` can match a Japanese window owner named `計算機`.
 
+`open-url` is still limited to Google Chrome, but it accepts `Chrome` as a short alias plus the running Chrome app's English name, localized name, bundle identifier, `.app` name, or app path.
+
 ## Operating Rules
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.

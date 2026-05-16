@@ -166,6 +166,7 @@ spaceguard assert --app "Google Chrome"
 `assert --app`は、CoreGraphicsのウィンドウ所有者名だけでなく、実行中アプリのローカライズ名、bundle ID、`.app`名、実行ファイル名も照合します。たとえば日本語環境でウィンドウ所有者名が`計算機`でも、`spaceguard assert --app "Calculator"`で確認できます。
 
 対象デスクトップ内のChromeへURLを渡したい場合は、`open-url`を使えます。
+`open-url`はGoogle Chrome専用ですが、`--app "Google Chrome"`だけでなく、`Chrome`という短い別名、実行中Chromeに対応するbundle IDや`.app`パスも受け付けます。
 
 ```sh
 spaceguard detect --json

@@ -673,6 +673,12 @@ enum SpaceGuardCore {
         }
 
         add(app)
+        if normalizedAppName(app) == "chrome" {
+            add("Google Chrome")
+            add("com.google.Chrome")
+            add("Google Chrome.app")
+            add("/Applications/Google Chrome.app")
+        }
         let queryNames = names
         for application in NSWorkspace.shared.runningApplications {
             let values = [
@@ -724,7 +730,8 @@ enum SpaceGuardCore {
     }
 
     static func openURLText(app: String, url: String, activate: Bool) -> (String, Int32) {
-        if app != "Google Chrome" {
+        let appNames = candidateAppNames(for: app)
+        if !appNames.contains(normalizedAppName("Google Chrome")) && !appNames.contains(normalizedAppName("com.google.Chrome")) {
             return ("NG open-url currently supports only Google Chrome", 1)
         }
         guard URL(string: url)?.scheme != nil else {
@@ -744,7 +751,6 @@ enum SpaceGuardCore {
         if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
             return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Bring the target Codex thread into view, then run `spaceguard clear` and `spaceguard detect --json` again.", 1)
         }
-        let appNames = candidateAppNames(for: app)
         let matches = space.windows.compactMap { windows[$0] }.filter {
             appNames.contains(normalizedAppName($0.owner)) && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
