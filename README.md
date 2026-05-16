@@ -114,6 +114,8 @@ spaceguard setup-codex --with-agents-rule --yes
 | `detect --json` | 最初に必ず実行 | このCodexスレッドが属するデスクトップを検出する |
 | `windows --json` | 対象デスクトップの状態確認 | 検出済みデスクトップ内のウィンドウを一覧する |
 | `windows --all-json` | 新規ウィンドウ作成前後の差分確認 | 全デスクトップのウィンドウを一覧し、今回増えたウィンドウだけを識別する |
+| `new-windows --before <before.json> --after <after.json>` | 作成前後のスナップショット比較 | 今回増えた可視ウィンドウと、その所属デスクトップを出す |
+| `move-new-window --window-id <id> --to-target-space --require-new-from <before.json>` | 新規ウィンドウの安全な移動試行 | 作成前に存在しなかった明示IDだけを対象に、非公開APIで移動を試す。失敗時は停止する |
 | `assert --app "<name>"` | 対象アプリを触る前 | 検出済みデスクトップ内に対象アプリのウィンドウがあるか確認する |
 | `open-url --app "Google Chrome" "<url>"` | ChromeでURLを開く時 | 検出済みデスクトップ内のChromeにバックグラウンドタブを作る |
 | `open-url --activate --app "Google Chrome" "<url>"` | 表示切り替えを許容して開く時 | 検出済みデスクトップ内のChromeを前面化し、新規タブをアクティブにする |
@@ -166,7 +168,27 @@ spaceguard windows --all-json
 
 `windows --all-json`は、全デスクトップのウィンドウ一覧と、現在スレッドの検出済みデスクトップがあれば`targetSpace`を返します。新しいウィンドウを作る必要がある操作では、作成前後で`windows --all-json`を取り、増えたウィンドウIDだけを「今回作ったウィンドウ」として扱います。
 
+作成前後の比較は`new-windows`でも確認できます。
+
+```sh
+spaceguard windows --all-json > /tmp/before.json
+# ここで新しいウィンドウを作る
+spaceguard windows --all-json > /tmp/after.json
+spaceguard new-windows --before /tmp/before.json --after /tmp/after.json --json
+```
+
+`windows --all-json`のトップレベル`windows`には、macOSの`Space Properties`が遅延しても判定しやすいように、可能な場合は`privateSpaceIds`と`privateSpaceNames`も含めます。
+
 既存の別デスクトップのウィンドウを対象デスクトップへ持ってくる、前面化する、再利用する、という扱いはしません。別デスクトップにあるウィンドウを扱えるのは、作成前後のスナップショット差分で今回新規に作られたウィンドウだと識別できる場合だけです。識別できない場合は操作を止めます。
+
+新規ウィンドウだと識別できた場合だけ、`move-new-window`で対象デスクトップへの移動を試せます。
+
+```sh
+spaceguard move-new-window --window-id 12345 --to-target-space --require-new-from /tmp/before.json --dry-run
+spaceguard move-new-window --window-id 12345 --to-target-space --require-new-from /tmp/before.json
+```
+
+このコマンドは非公開APIを使うため、環境によっては`SLSSetWindowListWorkspace failed`や`move was attempted`で失敗します。失敗した場合は、既存ウィンドウを代用せず停止してください。
 
 対象デスクトップ内にChromeがあるか確認します。
 
@@ -319,6 +341,7 @@ spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spa
 ```
 
 When a task must create a new app window, capture `spaceguard windows --all-json` before and after creation. Existing windows in other Spaces must not be moved, activated, or reused; only the exact newly created window identified by the snapshot diff may be handled.
+Use `spaceguard new-windows --before <before.json> --after <after.json>` to compute that diff. `move-new-window` may be used only for an explicit newly-created window ID and fails closed when macOS private APIs do not move it.
 
 Install:
 

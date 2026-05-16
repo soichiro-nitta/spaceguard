@@ -38,7 +38,9 @@ brew install --HEAD spaceguard
 
 - `spaceguard detect --json`: Use first. Detects the Desktop/Space for the current Codex thread.
 - `spaceguard windows --json`: Use when you need to inspect windows in the detected Desktop.
-- `spaceguard windows --all-json`: Use before and after creating a new app window when you must prove which window was newly created across all Spaces.
+- `spaceguard windows --all-json`: Use before and after creating a new app window when you must prove which window was newly created across all Spaces. Top-level windows include private Space IDs and names when available.
+- `spaceguard new-windows --before <before.json> --after <after.json>`: Use to compare before/after all-Space snapshots and identify newly-created visible windows.
+- `spaceguard move-new-window --window-id <id> --to-target-space --require-new-from <before.json>`: Use only for an explicit newly-created window ID. It uses macOS private APIs and must be treated as best-effort; if it fails, stop instead of operating another window.
 - `spaceguard assert --app "<App Name>"`: Use before touching an app. Confirms the app has a window in the detected Desktop.
 - `spaceguard open-url --app "Google Chrome" "<url>"`: Use to create a background Chrome tab in the detected Desktop.
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"`: Use only when foregrounding the target Chrome window is acceptable.
@@ -65,6 +67,8 @@ brew install --HEAD spaceguard
 - Stored detection files are freshness-limited when no validated thread Space exists: `high` is usable for 10 minutes, while `fallback-active-space` and other weak detections are usable for 60 seconds.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Do not bring an existing other-Space window into the target Space. The only exception is a window created by the current operation and identified by before/after `spaceguard windows --all-json` snapshots.
+- Prefer `spaceguard new-windows --before <before.json> --after <after.json>` over manual JSON inspection when a newly-created window has to be identified.
+- `spaceguard move-new-window` is allowed only after the before snapshot proves the window ID did not previously exist. If it reports a private API failure or cannot verify the final Space, do not continue with that window.
 - Keep this skill focused on Space detection and target-window selection.
 - Re-run `spaceguard detect --json` at the start of every new assistant turn before using Computer Use. Do not rely on a previous turn's GUI state.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.

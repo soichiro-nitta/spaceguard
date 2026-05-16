@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
 
 func spaceGuardHomeDirectory() -> String {
@@ -53,7 +54,7 @@ For Chrome tab creation, tab groups, claiming tabs, finalization, and browser op
 \(spaceGuardRuleEnd)
 """
 
-let cliUsage = "usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json|--all-json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]"
+let cliUsage = "usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json|--all-json]|new-windows --before <before.json> --after <after.json> [--json]|move-new-window --window-id <id> (--to-target-space|--to-desktop-index <n>) --require-new-from <before.json> [--dry-run]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]"
 
 struct WindowInfo {
     let id: Int
@@ -66,7 +67,7 @@ struct WindowInfo {
     let height: Double
 }
 
-struct WindowPayload: Encodable {
+struct WindowPayload: Codable {
     let id: Int
     let owner: String
     let title: String
@@ -75,9 +76,11 @@ struct WindowPayload: Encodable {
     let y: Double
     let width: Double
     let height: Double
+    let privateSpaceIds: [Int]?
+    let privateSpaceNames: [String]?
 }
 
-struct SpacePayload: Encodable {
+struct SpacePayload: Codable {
     let uuid: String
     let internalSpaceId: Int?
     let desktopIndex: Int?
@@ -107,12 +110,12 @@ struct WindowsPayload: Encodable {
     let windows: [WindowPayload]
 }
 
-struct SpaceWindowsPayload: Encodable {
+struct SpaceWindowsPayload: Codable {
     let space: SpacePayload
     let windows: [WindowPayload]
 }
 
-struct AllWindowsPayload: Encodable {
+struct AllWindowsPayload: Codable {
     let ok: Bool
     let source: String
     let threadId: String?
@@ -121,6 +124,19 @@ struct AllWindowsPayload: Encodable {
     let capturedAt: String
     let windows: [WindowPayload]?
     let spaces: [SpaceWindowsPayload]
+}
+
+struct NewWindowPayload: Encodable {
+    let window: WindowPayload
+    let space: SpacePayload?
+    let targetRelation: String
+}
+
+struct NewWindowsPayload: Encodable {
+    let ok: Bool
+    let beforeTargetSpace: SpacePayload?
+    let afterTargetSpace: SpacePayload?
+    let newWindows: [NewWindowPayload]
 }
 
 struct ErrorPayload: Encodable {
@@ -138,6 +154,11 @@ struct UninstallOptions {
     let dryRun: Bool
     let yes: Bool
     let keepAgentsRule: Bool
+}
+
+enum MoveWindowDestination {
+    case targetSpace
+    case desktopIndex(Int)
 }
 
 struct SpaceInfo {
@@ -200,6 +221,30 @@ struct ThreadSpaceBinding: Codable {
     let createdAt: String
     let detectedAt: String
     let lastUsedAt: String
+}
+
+enum SkyLight {
+    typealias SLSMainConnectionIDFn = @convention(c) () -> Int32
+    typealias SLSSpaceGetTypeFn = @convention(c) (Int32, UInt64) -> Int32
+    typealias SLSCopySpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    typealias SLSMoveWindowsToManagedSpaceFn = @convention(c) (Int32, CFArray, UInt64) -> Void
+    typealias SLSSpaceSetCompatIDFn = @convention(c) (Int32, UInt64, Int32) -> Int32
+    typealias SLSSetWindowListWorkspaceFn = @convention(c) (Int32, UnsafeMutablePointer<UInt32>, Int32, Int32) -> Int32
+
+    static func handle() -> UnsafeMutableRawPointer? {
+        dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+    }
+
+    static func symbol<T>(_ name: String, type: T.Type) -> T? {
+        guard let pointer = handle().flatMap({ dlsym($0, name) }) else {
+            return nil
+        }
+        return unsafeBitCast(pointer, to: type)
+    }
+
+    static func connection() -> Int32? {
+        symbol("SLSMainConnectionID", type: SLSMainConnectionIDFn.self)?()
+    }
 }
 
 enum SpaceGuardCore {
@@ -582,8 +627,16 @@ enum SpaceGuardCore {
         return "\(window.owner) #\(window.id) - \(window.title)"
     }
 
-    static func windowPayload(_ window: WindowInfo) -> WindowPayload {
-        WindowPayload(
+    static func windowPayload(
+        _ window: WindowInfo,
+        privateSpaceIds: [UInt64]? = nil,
+        knownSpaces: [SpaceInfo] = []
+    ) -> WindowPayload {
+        let spaceIds = privateSpaceIds?.map(Int.init)
+        let spaceNames = privateSpaceIds?.compactMap { privateSpaceId in
+            knownSpaces.first { $0.id == Int(privateSpaceId) }.map(spaceLabel)
+        }
+        return WindowPayload(
             id: window.id,
             owner: window.owner,
             title: window.title,
@@ -591,7 +644,9 @@ enum SpaceGuardCore {
             x: window.x,
             y: window.y,
             width: window.width,
-            height: window.height
+            height: window.height,
+            privateSpaceIds: spaceIds,
+            privateSpaceNames: spaceNames
         )
     }
 
@@ -1559,6 +1614,9 @@ enum SpaceGuardCore {
             return 1
         }
         let windows = loadWindows()
+        let visibleWindows = space.windows.compactMap { windows[$0] }
+            .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+            .map { windowPayload($0) }
         printJSON(WindowsPayload(
             ok: true,
             source: source,
@@ -1567,9 +1625,7 @@ enum SpaceGuardCore {
             threadName: detection.threadName,
             detectedAt: detection.detectedAt,
             space: spacePayload(space),
-            windows: space.windows.compactMap { windows[$0] }
-                .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
-                .map(windowPayload)
+            windows: visibleWindows
         ))
         return 0
     }
@@ -1590,29 +1646,287 @@ enum SpaceGuardCore {
             detection = currentDetection
         }
 
+        let visibleWindows = windows.values
+            .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+            .map { window in
+                windowPayload(
+                    window,
+                    privateSpaceIds: spacesForWindow(windowId: UInt32(window.id)),
+                    knownSpaces: snapshot.spaces
+                )
+            }
+            .sorted { $0.id < $1.id }
+        let spaceWindows = snapshot.spaces.map { space in
+            SpaceWindowsPayload(
+                space: spacePayload(space),
+                windows: space.windows.compactMap { windows[$0] }
+                    .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+                    .map { windowPayload($0) }
+            )
+        }
+        let targetSpace = detection.flatMap { currentDetection in
+            snapshot.spaces.first(where: { $0.uuid == currentDetection.spaceUuid }).map(spacePayload)
+        }
         printJSON(AllWindowsPayload(
             ok: true,
             source: source,
             threadId: detection?.threadId ?? threadId ?? currentThreadId(),
             threadName: detection?.threadName,
-            targetSpace: detection.flatMap { currentDetection in
-                snapshot.spaces.first(where: { $0.uuid == currentDetection.spaceUuid }).map(spacePayload)
-            },
+            targetSpace: targetSpace,
             capturedAt: ISO8601DateFormatter().string(from: Date()),
-            windows: windows.values
-                .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
-                .map(windowPayload)
-                .sorted { $0.id < $1.id },
-            spaces: snapshot.spaces.map { space in
-                SpaceWindowsPayload(
-                    space: spacePayload(space),
-                    windows: space.windows.compactMap { windows[$0] }
-                        .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
-                        .map(windowPayload)
-                )
-            }
+            windows: visibleWindows,
+            spaces: spaceWindows
         ))
         return 0
+    }
+
+    static func loadAllWindowsPayload(path: String) -> (AllWindowsPayload?, String?) {
+        let url = URL(fileURLWithPath: path)
+        guard let data = try? Data(contentsOf: url) else {
+            return (nil, "could not read snapshot: \(path)")
+        }
+        guard let payload = try? JSONDecoder().decode(AllWindowsPayload.self, from: data), payload.ok else {
+            return (nil, "snapshot is not a valid `spaceguard windows --all-json` payload: \(path)")
+        }
+        return (payload, nil)
+    }
+
+    static func visibleWindows(in payload: AllWindowsPayload) -> [WindowPayload] {
+        (payload.windows ?? payload.spaces.flatMap(\.windows))
+            .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+    }
+
+    static func spacePayloadByWindowId(in payload: AllWindowsPayload) -> [Int: SpacePayload] {
+        var spacesByWindowId: [Int: SpacePayload] = [:]
+        for space in payload.spaces {
+            for window in space.windows {
+                spacesByWindowId[window.id] = space.space
+            }
+        }
+        return spacesByWindowId
+    }
+
+    static func newWindowsPayload(before: AllWindowsPayload, after: AllWindowsPayload) -> NewWindowsPayload {
+        let beforeIds = Set(visibleWindows(in: before).map(\.id))
+        let spacesByWindowId = spacePayloadByWindowId(in: after)
+        let topWindowsById = Dictionary(uniqueKeysWithValues: visibleWindows(in: after).map { ($0.id, $0) })
+        let newWindows = visibleWindows(in: after)
+            .filter { !beforeIds.contains($0.id) }
+            .sorted { $0.id < $1.id }
+            .map { window in
+                let privateSpaceIds = topWindowsById[window.id]?.privateSpaceIds ?? []
+                let windowSpace = spacesByWindowId[window.id] ?? after.spaces
+                    .map(\.space)
+                    .first { space in
+                        space.internalSpaceId.map { privateSpaceIds.contains($0) } ?? false
+                    }
+                let relation: String
+                if let targetSpace = after.targetSpace, windowSpace?.uuid == targetSpace.uuid {
+                    relation = "target-space"
+                } else if windowSpace == nil {
+                    relation = "unknown-space"
+                } else {
+                    relation = "other-space"
+                }
+                return NewWindowPayload(window: window, space: windowSpace, targetRelation: relation)
+            }
+        return NewWindowsPayload(
+            ok: true,
+            beforeTargetSpace: before.targetSpace,
+            afterTargetSpace: after.targetSpace,
+            newWindows: newWindows
+        )
+    }
+
+    static func newWindowsDiff(beforePath: String, afterPath: String, json: Bool) -> Int32 {
+        let beforeResult = loadAllWindowsPayload(path: beforePath)
+        guard let before = beforeResult.0 else {
+            if json {
+                printJSON(ErrorPayload(ok: false, error: beforeResult.1 ?? "invalid before snapshot"))
+            } else {
+                print("NG \(beforeResult.1 ?? "invalid before snapshot")")
+            }
+            return 1
+        }
+        let afterResult = loadAllWindowsPayload(path: afterPath)
+        guard let after = afterResult.0 else {
+            if json {
+                printJSON(ErrorPayload(ok: false, error: afterResult.1 ?? "invalid after snapshot"))
+            } else {
+                print("NG \(afterResult.1 ?? "invalid after snapshot")")
+            }
+            return 1
+        }
+        let payload = newWindowsPayload(before: before, after: after)
+        if json {
+            printJSON(payload)
+        } else if payload.newWindows.isEmpty {
+            print("OK no new visible windows")
+        } else {
+            print("OK new visible windows")
+            for item in payload.newWindows {
+                let spaceName = item.space?.desktopName ?? "unknown Space"
+                print("\(item.targetRelation) \(spaceName) \(item.window.owner) #\(item.window.id) - \(item.window.title)")
+            }
+        }
+        return 0
+    }
+
+    static func spacesForWindow(windowId: UInt32) -> [UInt64] {
+        guard
+            let connection = SkyLight.connection(),
+            let copySpacesForWindows = SkyLight.symbol("SLSCopySpacesForWindows", type: SkyLight.SLSCopySpacesForWindowsFn.self)
+        else {
+            return []
+        }
+        let windowList = [NSNumber(value: windowId)] as CFArray
+        guard let spacesList = copySpacesForWindows(connection, 0x7, windowList)?.takeRetainedValue() as? [NSNumber] else {
+            return []
+        }
+        return spacesList.map(\.uint64Value)
+    }
+
+    static func spaceContainingWindow(windowId: Int, spaces: [SpaceInfo]) -> SpaceInfo? {
+        spacesForWindow(windowId: UInt32(windowId))
+            .compactMap { privateSpaceId in spaces.first { $0.id == Int(privateSpaceId) } }
+            .first ?? spaces.first { $0.windows.contains(windowId) }
+    }
+
+    static func isMacOSSonoma145OrNewer() -> Bool {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return version.majorVersion > 14 || (version.majorVersion == 14 && version.minorVersion >= 5)
+    }
+
+    static func validateMoveTarget(
+        windowId: Int,
+        destination: MoveWindowDestination,
+        beforePath: String
+    ) -> (WindowInfo?, SpaceInfo?, SpaceInfo?, String?) {
+        let detectionResult = loadCurrentThreadDetection()
+        guard case .success(let detection) = detectionResult else {
+            if case .failure(let error) = detectionResult {
+                return (nil, nil, nil, error.message)
+            }
+            return (nil, nil, nil, "current thread has not been detected yet")
+        }
+        let snapshot = loadSpacesSnapshot()
+        guard let targetSpace = snapshot.spaces.first(where: { $0.uuid == detection.spaceUuid }) else {
+            return (nil, nil, nil, "last detected Space was not found")
+        }
+        let beforeResult = loadAllWindowsPayload(path: beforePath)
+        guard let before = beforeResult.0 else {
+            return (nil, nil, nil, beforeResult.1 ?? "invalid before snapshot")
+        }
+        guard before.targetSpace?.uuid == targetSpace.uuid else {
+            return (nil, nil, nil, "before snapshot targetSpace does not match current target Space")
+        }
+        guard !visibleWindows(in: before).contains(where: { $0.id == windowId }) else {
+            return (nil, nil, nil, "window #\(windowId) existed in the before snapshot; refusing to move an existing window")
+        }
+        guard let window = loadWindows()[windowId], window.layer == 0, window.width > 20, window.height > 20 else {
+            return (nil, nil, nil, "window #\(windowId) was not found as a visible window")
+        }
+        guard !isCodexWindowCandidate(window) else {
+            return (nil, nil, nil, "refusing to move a Codex window")
+        }
+        guard let sourceSpace = spaceContainingWindow(windowId: windowId, spaces: snapshot.spaces) else {
+            return (nil, nil, nil, "source Space for window #\(windowId) was not found")
+        }
+        let destinationSpace: SpaceInfo?
+        switch destination {
+        case .targetSpace:
+            destinationSpace = targetSpace
+        case .desktopIndex(let desktopIndex):
+            destinationSpace = snapshot.spaces.first { $0.desktopIndex == desktopIndex }
+        }
+        guard let destinationSpace else {
+            return (nil, nil, nil, "destination Space was not found")
+        }
+        return (window, sourceSpace, destinationSpace, nil)
+    }
+
+    static func privateMoveWindow(windowId: UInt32, destinationSpaceId: UInt64) -> String? {
+        guard
+            let connection = SkyLight.connection(),
+            let spaceGetType = SkyLight.symbol("SLSSpaceGetType", type: SkyLight.SLSSpaceGetTypeFn.self),
+            let copySpacesForWindows = SkyLight.symbol("SLSCopySpacesForWindows", type: SkyLight.SLSCopySpacesForWindowsFn.self),
+            let moveWindowsToManagedSpace = SkyLight.symbol("SLSMoveWindowsToManagedSpace", type: SkyLight.SLSMoveWindowsToManagedSpaceFn.self),
+            let spaceSetCompatId = SkyLight.symbol("SLSSpaceSetCompatID", type: SkyLight.SLSSpaceSetCompatIDFn.self),
+            let setWindowListWorkspace = SkyLight.symbol("SLSSetWindowListWorkspace", type: SkyLight.SLSSetWindowListWorkspaceFn.self)
+        else {
+            return "required SkyLight symbols are unavailable"
+        }
+        guard spaceGetType(connection, destinationSpaceId) == 0 else {
+            return "destination Space \(destinationSpaceId) is not a user Space"
+        }
+        let windowList = [NSNumber(value: windowId)] as CFArray
+        guard let sourceSpaces = copySpacesForWindows(connection, 0x7, windowList)?.takeRetainedValue() as? [NSNumber] else {
+            return "SLSCopySpacesForWindows returned no Spaces for window #\(windowId)"
+        }
+        if sourceSpaces.contains(where: { $0.uint64Value == destinationSpaceId }) {
+            return nil
+        }
+        guard
+            let sourceSpace = sourceSpaces.first,
+            spaceGetType(connection, sourceSpace.uint64Value) == 0
+        else {
+            return "source Space for window #\(windowId) is not a user Space"
+        }
+        if isMacOSSonoma145OrNewer() {
+            let workspace = Int32(0x79616265)
+            var mutableWindowId = windowId
+            _ = spaceSetCompatId(connection, destinationSpaceId, workspace)
+            let result = setWindowListWorkspace(connection, &mutableWindowId, 1, workspace)
+            _ = spaceSetCompatId(connection, destinationSpaceId, 0)
+            if result != 0 {
+                moveWindowsToManagedSpace(connection, windowList, destinationSpaceId)
+                usleep(300_000)
+                if spacesForWindow(windowId: windowId).contains(destinationSpaceId) {
+                    return nil
+                }
+                return "SLSSetWindowListWorkspace failed with \(result); SLSMoveWindowsToManagedSpace fallback did not move the window"
+            }
+        } else {
+            moveWindowsToManagedSpace(connection, windowList, destinationSpaceId)
+        }
+        usleep(300_000)
+        if !spacesForWindow(windowId: windowId).contains(destinationSpaceId) {
+            return "move was attempted, but window #\(windowId) was not found in Space \(destinationSpaceId)"
+        }
+        return nil
+    }
+
+    static func moveNewWindowText(
+        windowId: Int,
+        destination: MoveWindowDestination,
+        beforePath: String,
+        dryRun: Bool
+    ) -> (String, Int32) {
+        let target = validateMoveTarget(windowId: windowId, destination: destination, beforePath: beforePath)
+        guard let window = target.0, let sourceSpace = target.1, let destinationSpace = target.2 else {
+            return ("NG \(target.3 ?? "invalid move target")", 1)
+        }
+        guard let destinationSpaceId = destinationSpace.id else {
+            return ("NG destination Space has no internal Space ID", 1)
+        }
+        if sourceSpace.uuid == destinationSpace.uuid || spacesForWindow(windowId: UInt32(windowId)).contains(UInt64(destinationSpaceId)) {
+            return ("OK window is already in \(spaceLabel(destinationSpace))\n\(displayName(window))", 0)
+        }
+        if dryRun {
+            return ([
+                "DRY-RUN would move newly-created window #\(windowId)",
+                "from \(spaceLabel(sourceSpace)) to \(spaceLabel(destinationSpace))",
+                displayName(window),
+            ].joined(separator: "\n"), 0)
+        }
+        if let error = privateMoveWindow(windowId: UInt32(windowId), destinationSpaceId: UInt64(destinationSpaceId)) {
+            return ("NG \(error)", 1)
+        }
+        return ([
+            "OK moved newly-created window #\(windowId)",
+            "from \(spaceLabel(sourceSpace)) to \(spaceLabel(destinationSpace))",
+            displayName(window),
+        ].joined(separator: "\n"), 0)
     }
 
     static func setupCodex(options: SetupCodexOptions) -> Int32 {
@@ -2130,6 +2444,59 @@ func runCLI(arguments: [String]) {
             exit(SpaceGuardCore.windowsForLastDetectionJSON(threadId: threadId))
         }
         let result = SpaceGuardCore.windowsForCurrentThreadText(threadId: threadId)
+        print(result.0)
+        exit(result.1)
+    case "new-windows":
+        guard
+            let beforeIndex = arguments.firstIndex(of: "--before"),
+            let afterIndex = arguments.firstIndex(of: "--after"),
+            arguments.indices.contains(beforeIndex + 1),
+            arguments.indices.contains(afterIndex + 1)
+        else {
+            print("usage: spaceguard new-windows --before <before.json> --after <after.json> [--json]")
+            exit(2)
+        }
+        exit(SpaceGuardCore.newWindowsDiff(
+            beforePath: arguments[beforeIndex + 1],
+            afterPath: arguments[afterIndex + 1],
+            json: arguments.contains("--json")
+        ))
+    case "move-new-window":
+        guard
+            let windowIndex = arguments.firstIndex(of: "--window-id"),
+            arguments.indices.contains(windowIndex + 1),
+            let windowId = Int(arguments[windowIndex + 1]),
+            let snapshotIndex = arguments.firstIndex(of: "--require-new-from"),
+            arguments.indices.contains(snapshotIndex + 1)
+        else {
+            print("usage: spaceguard move-new-window --window-id <id> (--to-target-space|--to-desktop-index <n>) --require-new-from <before.json> [--dry-run]")
+            exit(2)
+        }
+        var destination: MoveWindowDestination?
+        if arguments.contains("--to-target-space") {
+            destination = .targetSpace
+        }
+        if
+            let desktopIndex = arguments.firstIndex(of: "--to-desktop-index"),
+            arguments.indices.contains(desktopIndex + 1),
+            let index = Int(arguments[desktopIndex + 1])
+        {
+            if destination != nil {
+                print("NG choose only one destination")
+                exit(2)
+            }
+            destination = .desktopIndex(index)
+        }
+        guard let destination else {
+            print("usage: spaceguard move-new-window --window-id <id> (--to-target-space|--to-desktop-index <n>) --require-new-from <before.json> [--dry-run]")
+            exit(2)
+        }
+        let result = SpaceGuardCore.moveNewWindowText(
+            windowId: windowId,
+            destination: destination,
+            beforePath: arguments[snapshotIndex + 1],
+            dryRun: arguments.contains("--dry-run")
+        )
         print(result.0)
         exit(result.1)
     case "detect-current-thread":
