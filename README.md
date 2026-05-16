@@ -117,7 +117,7 @@ spaceguard setup-codex --with-agents-rule --yes
 | `open-url --app "Google Chrome" "<url>"` | ChromeでURLを開く時 | 検出済みデスクトップ内のChromeにバックグラウンドタブを作る |
 | `open-url --activate --app "Google Chrome" "<url>"` | 表示切り替えを許容して開く時 | 検出済みデスクトップ内のChromeを前面化し、新規タブをアクティブにする |
 | `status` | 現在の保持状態を見る時 | スレッド別に保存された作業場所と検出状態を確認する |
-| `clear` | 現在スレッドの保存状態を破棄したい時 | スレッド別の作業場所と検出キャッシュを消す |
+| `clear` | 現在スレッドの保存状態を破棄したい時 | スレッド別の作業場所、検出キャッシュ、同じスレッドの最新検出を消す |
 | `clear --all-stale` | 古い保存状態を掃除したい時 | 最終使用から30日を超えたスレッド別保存を消す |
 
 Chromeの新規URL確認では、まず`open-url`を使います。Codex Chrome Extensionの`browser.tabs.new()`は、ユーザーが別デスクトップのChromeを見ているとそちらに開く可能性があるため、最初のタブ作成には使わない方針です。
@@ -153,7 +153,7 @@ spaceguard detect --json
 spaceguard windows --json
 ```
 
-`windows --json`は、参照した現在スレッドの`threadId`、`confidence`、`detectedAt`も返します。直前の`detect --json`と同じスレッド、同じデスクトップを見ているか確認できます。
+`windows --json`は、参照した現在スレッドの`threadId`、`confidence`、`detectedAt`も返します。直前の`detect --json`と同じスレッド、同じデスクトップを見ているか確認できます。保存済みのスレッド作業場所より新しい同一スレッドの検出結果があり、デスクトップが一致しない場合は、古い保存を無効化して新しい検出結果を参照します。
 
 `windows --json`は通常、現在の`CODEX_THREAD_ID`に紐づく検出結果を参照します。現在スレッドの検出結果が見つからない場合でも、直近60秒以内の`detect`結果があれば、診断用に`source: "recent-last-detection"`として返します。必要な場合は`windows --thread-id <id> --json`で参照するスレッドを明示できます。
 
@@ -184,11 +184,17 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 同じスレッドの`thread-bound`結果が有効な場合でも、複数のCodexウィンドウが開いているときは`detect`の冒頭で無条件に再利用しません。その時点で見えているCodexウィンドウを取り直し、保存済みの作業場所と一致する場合だけ`thread-bound`として扱います。これにより、別SpaceのCodexで作られた保存済み束縛を誤って信じる事故を避けます。
 
+複数のCodexウィンドウがある場合、SpaceGuardはAccessibilityのメインウィンドウだけを根拠に`high`を返しません。保存済みの`thread-bound`または検証済みの`cached-high`が使えない場合は、現在表示中Spaceのフォールバック検出に落とし、条件が揃わなければ停止します。
+
 検出キャッシュとスレッド別保存には形式バージョンを持たせています。Space判定ロジックが変わった後は、古い形式の保存済み作業場所や検出結果を無効化し、次回`detect`で再検出します。これにより、古い実装で誤って保存されたCodexウィンドウを更新後も使い続ける事故を避けます。
+
+スレッド別保存では、保存を最後に参照した時刻とは別に、実際にそのデスクトップを検出した時刻を保持します。`detect`後に`windows`、`assert`、`open-url`が古いデスクトップを返しそうな場合は、新しい同一スレッド検出との不一致を検知し、古いスレッド保存を使いません。
 
 スレッド別保存がない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
 
 `confidence=high`で検出できた場合、SpaceGuardは`~/.spaceguard/thread-spaces/<thread-id>.json`へ現在スレッドの作業場所を自動保存します。`open-url`、`assert`、`windows`はこのスレッド別保存を優先します。`fallback-active-space`は現在表示中のデスクトップへ寄る可能性があるため、永続保存しません。
+
+スレッド別保存がない状態で検出ファイルだけを使う場合、`high`は10分以内、`fallback-active-space`などの弱い検出は60秒以内のものだけを操作に使います。古い場合は`detect --json`の再実行を求めて停止します。
 
 複数のCodexウィンドウがあり、自動検出が曖昧な場合は推測せず止まります。対象スレッドのCodexウィンドウを表示してから、あらためて`detect`してください。
 

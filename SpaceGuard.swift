@@ -25,8 +25,8 @@ let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let recentLastDetectionMaxAgeSeconds: TimeInterval = 60
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
-let currentDetectionSchemaVersion = 2
-let currentThreadSpaceSchemaVersion = 2
+let currentDetectionSchemaVersion = 3
+let currentThreadSpaceSchemaVersion = 3
 let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleBlock = """
@@ -170,6 +170,7 @@ struct ThreadSpaceBinding: Codable {
     let spaceUuid: String
     let codexWindowsInSpace: Int
     let createdAt: String
+    let detectedAt: String
     let lastUsedAt: String
 }
 
@@ -369,6 +370,7 @@ enum SpaceGuardCore {
             spaceUuid: detection.space.uuid,
             codexWindowsInSpace: detection.codexWindowsInSpace,
             createdAt: existing?.createdAt ?? now,
+            detectedAt: now,
             lastUsedAt: now
         )
         try? FileManager.default.createDirectory(
@@ -391,7 +393,8 @@ enum SpaceGuardCore {
             let data = try? Data(contentsOf: threadSpaceURL(threadId: threadId)),
             let binding = try? JSONDecoder().decode(ThreadSpaceBinding.self, from: data),
             binding.schemaVersion == currentThreadSpaceSchemaVersion,
-            !isStaleThreadSpace(binding)
+            !isStaleThreadSpace(binding),
+            !isThreadSpaceSupersededByDetection(binding)
         else {
             return nil
         }
@@ -413,6 +416,7 @@ enum SpaceGuardCore {
             spaceUuid: binding.spaceUuid,
             codexWindowsInSpace: binding.codexWindowsInSpace,
             createdAt: binding.createdAt,
+            detectedAt: binding.detectedAt,
             lastUsedAt: ISO8601DateFormatter().string(from: Date())
         )
         let encoder = JSONEncoder()
@@ -423,10 +427,29 @@ enum SpaceGuardCore {
     }
 
     static func isStaleThreadSpace(_ binding: ThreadSpaceBinding) -> Bool {
-        guard let lastUsedAt = ISO8601DateFormatter().date(from: binding.lastUsedAt) else {
+        guard let lastUsedAt = date(from: binding.lastUsedAt) else {
             return true
         }
         return Date().timeIntervalSince(lastUsedAt) > threadSpaceMaxAgeSeconds
+    }
+
+    static func isThreadSpaceSupersededByDetection(_ binding: ThreadSpaceBinding) -> Bool {
+        guard
+            let detection = loadDetection(threadId: binding.threadId),
+            detection.threadId == binding.threadId,
+            detectionConflictsWithBinding(detection, binding),
+            let detectedAt = date(from: detection.detectedAt),
+            let bindingDetectedAt = date(from: binding.detectedAt)
+        else {
+            return false
+        }
+        return detectedAt > bindingDetectedAt
+    }
+
+    static func detectionConflictsWithBinding(_ detection: LastDetection, _ binding: ThreadSpaceBinding) -> Bool {
+        detection.spaceUuid != binding.spaceUuid
+            || detection.desktopIndex != binding.desktopIndex
+            || detection.internalSpaceId != binding.internalSpaceId
     }
 
     static func cleanupStaleThreadSpaces() {
@@ -446,7 +469,11 @@ enum SpaceGuardCore {
                 try? FileManager.default.removeItem(at: url)
                 continue
             }
-            if binding.schemaVersion != currentThreadSpaceSchemaVersion || isStaleThreadSpace(binding) {
+            if
+                binding.schemaVersion != currentThreadSpaceSchemaVersion
+                    || isStaleThreadSpace(binding)
+                    || isThreadSpaceSupersededByDetection(binding)
+            {
                 try? FileManager.default.removeItem(at: url)
             }
         }
@@ -456,6 +483,9 @@ enum SpaceGuardCore {
         if let threadId = currentThreadId() {
             try? FileManager.default.removeItem(at: detectionURL(threadId: threadId))
             try? FileManager.default.removeItem(at: threadSpaceURL(threadId: threadId))
+            if loadLastDetection()?.threadId == threadId {
+                try? FileManager.default.removeItem(at: lastDetectionURL)
+            }
         }
     }
 
@@ -471,7 +501,7 @@ enum SpaceGuardCore {
             internalSpaceId: binding.internalSpaceId,
             spaceUuid: binding.spaceUuid,
             codexWindowsInSpace: binding.codexWindowsInSpace,
-            detectedAt: binding.lastUsedAt
+            detectedAt: binding.detectedAt
         )
     }
 
@@ -495,6 +525,9 @@ enum SpaceGuardCore {
         }
         guard detection.threadId == threadId else {
             return .failure(DetectionError(message: "NG last detection belongs to another thread. expected=\(threadId) actual=\(detection.threadId). Run `spaceguard detect --json` in this thread before operating windows."))
+        }
+        guard isUsableStoredDetection(detection) else {
+            return .failure(DetectionError(message: "NG current thread detection is stale. Run `spaceguard detect --json` again before operating windows."))
         }
         return .success(detection)
     }
@@ -560,6 +593,10 @@ enum SpaceGuardCore {
         return "Space \(space.id.map(String.init) ?? "?")"
     }
 
+    static func date(from value: String) -> Date? {
+        ISO8601DateFormatter().date(from: value)
+    }
+
     static func stateSpaceLabel(spaceId: Int?, uuid: String) -> String {
         if let space = loadSpaces().first(where: { $0.uuid == uuid }) {
             return spaceLabel(space)
@@ -577,7 +614,7 @@ enum SpaceGuardCore {
             return [
                 "OK thread-bound \(spaceLabel) internalSpace=\(binding.internalSpaceId.map(String.init) ?? "?") uuid=\(binding.spaceUuid)",
                 "thread=\(binding.threadName ?? binding.threadId)",
-                "window=\(binding.cgWindowId) createdAt=\(binding.createdAt) lastUsedAt=\(binding.lastUsedAt)",
+                "window=\(binding.cgWindowId) createdAt=\(binding.createdAt) detectedAt=\(binding.detectedAt) lastUsedAt=\(binding.lastUsedAt)",
             ].joined(separator: "\n")
         }
         guard let detection = loadDetection(threadId: threadId) else {
@@ -976,14 +1013,20 @@ enum SpaceGuardCore {
         let totalCodexWindows = windows.values.filter {
             $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
         }.count
-        if electronId == nil && totalCodexWindows > 1 {
+        if totalCodexWindows > 1 {
+            if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
+                return .success(bound)
+            }
+            if let cached = cachedDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
+                return .success(cached)
+            }
             return activeSpaceFallbackDetection(
                 threadId: threadId,
                 threadName: currentThreadName(threadId: threadId),
                 electronId: electronId,
                 snapshot: snapshot,
                 windows: windows,
-                failureReason: "multiple Codex windows are open and no thread/window hint is available"
+                failureReason: "multiple Codex windows are open and the native Codex window cannot be mapped safely to the current thread"
             )
         }
         guard let rect = codexMainWindowRect() else {
@@ -1162,10 +1205,17 @@ enum SpaceGuardCore {
     }
 
     static func isRecentDetection(_ detection: LastDetection, maxAge: TimeInterval) -> Bool {
-        guard let detectedAt = ISO8601DateFormatter().date(from: detection.detectedAt) else {
+        guard let detectedAt = date(from: detection.detectedAt) else {
             return false
         }
         return Date().timeIntervalSince(detectedAt) <= maxAge
+    }
+
+    static func isUsableStoredDetection(_ detection: LastDetection) -> Bool {
+        if detection.confidence == "high" {
+            return isRecentDetection(detection, maxAge: highConfidenceCacheMaxAgeSeconds)
+        }
+        return isRecentDetection(detection, maxAge: recentLastDetectionMaxAgeSeconds)
     }
 
     static func formatDetection(_ detection: DetectionResult) -> String {

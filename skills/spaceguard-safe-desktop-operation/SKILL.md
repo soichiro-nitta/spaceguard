@@ -48,8 +48,11 @@ brew install --HEAD spaceguard
 - A `high` detection persists the current thread's target Space. Later `windows`, `assert`, and `open-url` prefer that saved thread Space.
 - `thread-bound` means SpaceGuard reused the saved target Space for the current Codex thread after confirming the saved Codex window still exists in that Space.
 - With multiple Codex windows open, do not trust `thread-bound` by itself. Confirm `detect --json` and `windows --json` agree before touching Chrome or other desktop apps.
+- With multiple Codex windows open, SpaceGuard does not return `high` from the accessibility main window alone. It must reuse a validated `thread-bound` or `cached-high` result, or fall back to `fallback-active-space`.
+- If `windows --json`, `assert`, or `open-url` would reuse a saved thread Space but a newer same-thread `detect` result points to a different Desktop, SpaceGuard invalidates the saved Space and uses the newer detection instead.
 - `cached-high` means SpaceGuard reused a `high` result from the same thread only after confirming the cached Codex window still exists in the same Desktop and the cache is recent. Treat it as the current thread's target Space, but re-run `detect` if the user says the Codex window moved.
 - `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. It is not persisted as the current thread's target Space.
+- Stored detection files are freshness-limited when no validated thread Space exists: `high` is usable for 10 minutes, while `fallback-active-space` and other weak detections are usable for 60 seconds.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
 - Keep this skill focused on Space detection and target-window selection.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.
