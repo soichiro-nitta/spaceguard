@@ -25,8 +25,8 @@ let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let recentLastDetectionMaxAgeSeconds: TimeInterval = 60
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
-let currentDetectionSchemaVersion = 3
-let currentThreadSpaceSchemaVersion = 3
+let currentDetectionSchemaVersion = 4
+let currentThreadSpaceSchemaVersion = 4
 let spaceGuardRuleBegin = "<!-- BEGIN SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleEnd = "<!-- END SPACEGUARD CODEX RULE -->"
 let spaceGuardRuleBlock = """
@@ -834,7 +834,7 @@ enum SpaceGuardCore {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return nil
         }
-        let pattern = #"conversationId=\#(NSRegularExpression.escapedPattern(for: threadId)).*?windowId=([0-9]+)"#
+        let pattern = #"conversationId=\#(NSRegularExpression.escapedPattern(for: threadId))[^"]*?windowId=([0-9]+)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return nil
         }
@@ -1020,14 +1020,7 @@ enum SpaceGuardCore {
             if let cached = cachedDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
                 return .success(cached)
             }
-            return activeSpaceFallbackDetection(
-                threadId: threadId,
-                threadName: currentThreadName(threadId: threadId),
-                electronId: electronId,
-                snapshot: snapshot,
-                windows: windows,
-                failureReason: "multiple Codex windows are open and the native Codex window cannot be mapped safely to the current thread"
-            )
+            return .failure(DetectionError(message: "NG multiple Codex windows are open and the native Codex window cannot be mapped safely to the current thread. Bring the target Codex thread into view, then close extra Codex windows or use an existing thread-bound/cached-high detection before operating windows."))
         }
         guard let rect = codexMainWindowRect() else {
             return activeSpaceFallbackDetection(
@@ -1106,6 +1099,9 @@ enum SpaceGuardCore {
         }
         if totalCodexWindows <= 1, let cached = cachedDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
             return .success(cached)
+        }
+        if totalCodexWindows > 1 {
+            return .failure(DetectionError(message: "NG \(failureReason); active Space fallback is disabled while multiple Codex windows are open for thread=\(threadId)"))
         }
 
         let activeSpaces = snapshot.spaces.filter { snapshot.activeSpaceUuids.contains($0.uuid) }
