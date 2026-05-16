@@ -839,14 +839,14 @@ enum SpaceGuardCore {
             return nil
         }
         let breadcrumbs = sentryBreadcrumbs(from: data)
-        if let windowId = latestBrowserSessionWindowId(threadId: threadId, breadcrumbs: breadcrumbs) {
-            return windowId
+        guard currentThreadId() == threadId else {
+            return latestBrowserSessionWindowId(threadId: threadId, breadcrumbs: breadcrumbs)
         }
 
-        guard currentThreadId() == threadId else {
-            return nil
+        if let rendererId = latestCurrentRendererWebContentsId(breadcrumbs: breadcrumbs) {
+            return rendererId
         }
-        return latestCurrentRendererWebContentsId(breadcrumbs: breadcrumbs)
+        return latestBrowserSessionWindowId(threadId: threadId, breadcrumbs: breadcrumbs)
     }
 
     static func sentryBreadcrumbs(from data: Data) -> [[String: Any]] {
@@ -866,8 +866,14 @@ enum SpaceGuardCore {
             return nil
         }
 
+        let now = Date().timeIntervalSince1970
         for breadcrumb in breadcrumbs.reversed() {
-            guard let message = breadcrumb["message"] as? String else {
+            guard
+                let message = breadcrumb["message"] as? String,
+                let timestamp = breadcrumb["timestamp"] as? NSNumber,
+                now >= timestamp.doubleValue,
+                now - timestamp.doubleValue <= currentRendererSnapshotMaxAgeSeconds
+            else {
                 continue
             }
             let range = NSRange(message.startIndex..<message.endIndex, in: message)
