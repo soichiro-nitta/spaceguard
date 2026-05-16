@@ -725,6 +725,7 @@ enum SpaceGuardCore {
               set boundsMatch to leftDiff <= 3 and topDiff <= 3 and rightDiff <= 3 and bottomDiff <= 3
               set titleMatch to titleText is targetTitle or targetTitle is "" or titleText contains targetTitle or targetTitle contains titleText
               if boundsMatch and titleMatch then
+                set previousActiveTabIndex to active tab index of w
                 make new tab at end of tabs of w with properties {URL:targetURL}
                 if shouldActivate then
                   set index of w to 1
@@ -732,6 +733,7 @@ enum SpaceGuardCore {
                   activate
                   return "OK opened URL in target Google Chrome window"
                 end if
+                set active tab index of w to previousActiveTabIndex
                 return "OK opened background URL in target Google Chrome window"
               end if
             end repeat
@@ -843,6 +845,10 @@ enum SpaceGuardCore {
         let matches = regex.matches(in: text, options: [], range: range)
         if let match = matches.last, let idRange = Range(match.range(at: 1), in: text) {
             return String(text[idRange])
+        }
+
+        guard currentThreadId() == threadId else {
+            return nil
         }
 
         let rendererPattern = #""renderer_webcontents_id"\s*:\s*([0-9]+)"#
