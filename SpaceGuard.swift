@@ -652,6 +652,52 @@ enum SpaceGuardCore {
         }.joined(separator: "\n")
     }
 
+    static func normalizedAppName(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func candidateAppNames(for app: String) -> Set<String> {
+        var names = Set<String>()
+        func add(_ value: String?) {
+            guard let value, !value.isEmpty else {
+                return
+            }
+            names.insert(normalizedAppName(value))
+            let lastPathComponent = URL(fileURLWithPath: value).lastPathComponent
+            if !lastPathComponent.isEmpty && lastPathComponent != value {
+                names.insert(normalizedAppName(lastPathComponent))
+            }
+            if lastPathComponent.hasSuffix(".app") {
+                names.insert(normalizedAppName(String(lastPathComponent.dropLast(4))))
+            }
+        }
+
+        add(app)
+        let queryNames = names
+        for application in NSWorkspace.shared.runningApplications {
+            let values = [
+                application.localizedName,
+                application.bundleIdentifier,
+                application.bundleURL?.path,
+                application.bundleURL?.lastPathComponent,
+                application.bundleURL?.deletingPathExtension().lastPathComponent,
+                application.executableURL?.lastPathComponent,
+            ]
+            let applicationNames = Set(values.compactMap { value -> String? in
+                guard let value, !value.isEmpty else {
+                    return nil
+                }
+                return normalizedAppName(value)
+            })
+            if !queryNames.isDisjoint(with: applicationNames) {
+                for value in values {
+                    add(value)
+                }
+            }
+        }
+        return names
+    }
+
     static func assertText(app: String) -> (String, Int32) {
         let detectionResult = loadCurrentThreadDetection()
         guard case .success(let detection) = detectionResult else {
@@ -667,8 +713,9 @@ enum SpaceGuardCore {
         if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
             return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Bring the target Codex thread into view, then run `spaceguard clear` and `spaceguard detect --json` again.", 1)
         }
+        let appNames = candidateAppNames(for: app)
         let matches = space.windows.compactMap { windows[$0] }.filter {
-            $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
+            appNames.contains(normalizedAppName($0.owner)) && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
         if matches.isEmpty {
             return ("NG no \(app) window in \(spaceLabel(space))", 1)
@@ -697,8 +744,9 @@ enum SpaceGuardCore {
         if detection.electronWindowId == nil && detection.codexWindowsInSpace > 1 {
             return ("NG last detection is ambiguous because multiple Codex windows are in the target Space and no thread/window hint was saved. Bring the target Codex thread into view, then run `spaceguard clear` and `spaceguard detect --json` again.", 1)
         }
+        let appNames = candidateAppNames(for: app)
         let matches = space.windows.compactMap { windows[$0] }.filter {
-            $0.owner == app && $0.layer == 0 && $0.width > 20 && $0.height > 20
+            appNames.contains(normalizedAppName($0.owner)) && $0.layer == 0 && $0.width > 20 && $0.height > 20
         }
         guard let window = matches.first else {
             return ("NG no \(app) window in \(spaceLabel(space))", 1)

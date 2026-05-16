@@ -44,6 +44,8 @@ brew install --HEAD spaceguard
 - `spaceguard clear`: Use to discard the current thread's saved target Space and detection cache.
 - `spaceguard clear --all-stale`: Use to remove stale saved thread Spaces older than the retention window.
 
+`assert --app` resolves the requested app against running app metadata as well as the CoreGraphics window owner. English names, localized names, bundle identifiers, `.app` names, and executable names are acceptable when the app is running. For example, `spaceguard assert --app "Calculator"` can match a Japanese window owner named `計算機`.
+
 ## Operating Rules
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
