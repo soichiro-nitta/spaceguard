@@ -119,6 +119,7 @@ struct AllWindowsPayload: Encodable {
     let threadName: String?
     let targetSpace: SpacePayload?
     let capturedAt: String
+    let windows: [WindowPayload]?
     let spaces: [SpaceWindowsPayload]
 }
 
@@ -1598,6 +1599,10 @@ enum SpaceGuardCore {
                 snapshot.spaces.first(where: { $0.uuid == currentDetection.spaceUuid }).map(spacePayload)
             },
             capturedAt: ISO8601DateFormatter().string(from: Date()),
+            windows: windows.values
+                .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+                .map(windowPayload)
+                .sorted { $0.id < $1.id },
             spaces: snapshot.spaces.map { space in
                 SpaceWindowsPayload(
                     space: spacePayload(space),
