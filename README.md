@@ -188,6 +188,8 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 `electron-window-inferred`は、候補のCodexウィンドウが現在のSpaces情報内に存在し、同じデスクトップに残っていることを確認した場合だけ返します。これにより、現在のスレッドを表示しているCodexウィンドウがAXメインウィンドウではない場合でも、複数Codexウィンドウの差分から安全に自動特定できます。
 
+現在スレッドのElectronウィンドウIDは、CodexのSentry breadcrumbsに残る`browser-session-registry`を優先して読みます。該当行がない場合だけ、現在の`CODEX_THREAD_ID`と一致するスレッドで、直近5分以内の`app_state_snapshot`にある`renderer_webcontents_id`を補助的に使います。古いスナップショットしかない場合は推定に使わず停止します。
+
 `electron-window-inferred`、保存済みの`thread-bound`、または検証済みの`cached-high`が使えない場合は、現在表示中Spaceのフォールバック検出にも落とさず停止します。これは、ユーザーが見ているデスクトップとCodexのAXメインウィンドウがずれたときに、別SpaceのChromeを開く事故を避けるためです。
 
 検出キャッシュとスレッド別保存には形式バージョンを持たせています。Space判定ロジックが変わった後は、古い形式の保存済み作業場所や検出結果を無効化し、次回`detect`で再検出します。これにより、古い実装で誤って保存されたCodexウィンドウを更新後も使い続ける事故を避けます。

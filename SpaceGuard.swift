@@ -25,6 +25,7 @@ let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let recentLastDetectionMaxAgeSeconds: TimeInterval = 60
 let knownElectronWindowMappingMaxAgeSeconds: TimeInterval = 60 * 60 * 36
+let currentRendererSnapshotMaxAgeSeconds: TimeInterval = 300
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
 let currentDetectionSchemaVersion = 4
 let currentThreadSpaceSchemaVersion = 4
@@ -834,32 +835,70 @@ enum SpaceGuardCore {
 
     static func latestCodexElectronWindowId(threadId: String) -> String? {
         let path = "\(NSHomeDirectory())/Library/Application Support/Codex/sentry/scope_v3.json"
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return nil
         }
-        let pattern = #"conversationId=\#(NSRegularExpression.escapedPattern(for: threadId))[^"]*?windowId=([0-9]+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return nil
-        }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, options: [], range: range)
-        if let match = matches.last, let idRange = Range(match.range(at: 1), in: text) {
-            return String(text[idRange])
+        let breadcrumbs = sentryBreadcrumbs(from: data)
+        if let windowId = latestBrowserSessionWindowId(threadId: threadId, breadcrumbs: breadcrumbs) {
+            return windowId
         }
 
         guard currentThreadId() == threadId else {
             return nil
         }
+        return latestCurrentRendererWebContentsId(breadcrumbs: breadcrumbs)
+    }
 
-        let rendererPattern = #""renderer_webcontents_id"\s*:\s*([0-9]+)"#
-        guard let rendererRegex = try? NSRegularExpression(pattern: rendererPattern) else {
+    static func sentryBreadcrumbs(from data: Data) -> [[String: Any]] {
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let scope = root["scope"] as? [String: Any],
+            let breadcrumbs = scope["breadcrumbs"] as? [[String: Any]]
+        else {
+            return []
+        }
+        return breadcrumbs
+    }
+
+    static func latestBrowserSessionWindowId(threadId: String, breadcrumbs: [[String: Any]]) -> String? {
+        let pattern = #"conversationId=\#(NSRegularExpression.escapedPattern(for: threadId))\b[^"]*?windowId=([0-9]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return nil
         }
-        let rendererMatches = rendererRegex.matches(in: text, options: [], range: range)
-        guard let rendererMatch = rendererMatches.last, let rendererIdRange = Range(rendererMatch.range(at: 1), in: text) else {
-            return nil
+
+        for breadcrumb in breadcrumbs.reversed() {
+            guard let message = breadcrumb["message"] as? String else {
+                continue
+            }
+            let range = NSRange(message.startIndex..<message.endIndex, in: message)
+            guard
+                let match = regex.firstMatch(in: message, options: [], range: range),
+                let idRange = Range(match.range(at: 1), in: message)
+            else {
+                continue
+            }
+            return String(message[idRange])
         }
-        return String(text[rendererIdRange])
+        return nil
+    }
+
+    static func latestCurrentRendererWebContentsId(breadcrumbs: [[String: Any]]) -> String? {
+        let now = Date().timeIntervalSince1970
+        for breadcrumb in breadcrumbs.reversed() {
+            guard
+                let message = breadcrumb["message"] as? String,
+                message == "app_state_snapshot",
+                let timestamp = breadcrumb["timestamp"] as? NSNumber,
+                now >= timestamp.doubleValue,
+                now - timestamp.doubleValue <= currentRendererSnapshotMaxAgeSeconds,
+                let data = breadcrumb["data"] as? [String: Any],
+                let rendererId = data["renderer_webcontents_id"] as? NSNumber
+            else {
+                continue
+            }
+            return rendererId.stringValue
+        }
+        return nil
     }
 
     static func currentThreadName(threadId: String) -> String? {

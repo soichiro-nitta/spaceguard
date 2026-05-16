@@ -47,6 +47,7 @@ brew install --HEAD spaceguard
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
 - A `high` detection persists the current thread's target Space. Later `windows`, `assert`, and `open-url` prefer that saved thread Space.
 - `electron-window-inferred` means SpaceGuard matched the current thread's Electron window ID to a native Codex window by comparing recent validated detections for other Electron windows, then persisted that target Space.
+- If the current Electron window ID is unavailable or only stale current-renderer evidence exists, SpaceGuard should stop instead of guessing from the active Space.
 - `thread-bound` means SpaceGuard reused the saved target Space for the current Codex thread after confirming the saved Codex window still exists in that Space.
 - With multiple Codex windows open, do not trust `thread-bound` by itself. Confirm `detect --json` and `windows --json` agree before touching Chrome or other desktop apps.
 - With multiple Codex windows open, SpaceGuard does not return `high` from the accessibility main window alone and does not fall back to `fallback-active-space`. It must infer `electron-window-inferred` or reuse a validated `thread-bound` or `cached-high` result, otherwise stop.
