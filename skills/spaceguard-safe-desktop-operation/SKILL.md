@@ -31,12 +31,14 @@ brew install --HEAD spaceguard
 9. If detection fails, confidence is lower, `windows --json` disagrees with `detect --json`, the target app is not in the detected Desktop, or Computer Use cannot be matched to the detected Desktop's window, do not operate an existing window from another Space.
 10. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a validated `electron-window-inferred`, `thread-bound`, or `cached-high` result for the same thread is returned.
 11. Do not manually bind a Desktop. When detection is ambiguous, ask the user to bring the target Codex thread into view and run `spaceguard detect --json` again.
-12. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
+12. Do not move, activate, or reuse an existing window from another Space. If a new app window must be created, capture `spaceguard windows --all-json` before and after creation and handle a wrong-Space window only when that exact newly created window can be identified.
+13. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
 
 ## Command Map
 
 - `spaceguard detect --json`: Use first. Detects the Desktop/Space for the current Codex thread.
 - `spaceguard windows --json`: Use when you need to inspect windows in the detected Desktop.
+- `spaceguard windows --all-json`: Use before and after creating a new app window when you must prove which window was newly created across all Spaces.
 - `spaceguard assert --app "<App Name>"`: Use before touching an app. Confirms the app has a window in the detected Desktop.
 - `spaceguard open-url --app "Google Chrome" "<url>"`: Use to create a background Chrome tab in the detected Desktop.
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"`: Use only when foregrounding the target Chrome window is acceptable.
@@ -62,6 +64,7 @@ brew install --HEAD spaceguard
 - `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. It is only allowed when a single Codex window is open, and it is not persisted as the current thread's target Space.
 - Stored detection files are freshness-limited when no validated thread Space exists: `high` is usable for 10 minutes, while `fallback-active-space` and other weak detections are usable for 60 seconds.
 - Do not bring forward, move, or operate a window that is only known to exist in another Space.
+- Do not bring an existing other-Space window into the target Space. The only exception is a window created by the current operation and identified by before/after `spaceguard windows --all-json` snapshots.
 - Keep this skill focused on Space detection and target-window selection.
 - Re-run `spaceguard detect --json` at the start of every new assistant turn before using Computer Use. Do not rely on a previous turn's GUI state.
 - When opening a new Chrome URL for a visual/browser check, prefer `spaceguard open-url --app "Google Chrome" "<url>"` after `detect` and `assert`. Do not start with Codex Chrome Extension `browser.tabs.new()` when the user may be working in another Space.
@@ -73,6 +76,7 @@ brew install --HEAD spaceguard
 - `spaceguard open-url --activate --app "Google Chrome" "<url>"` brings the matched Chrome window in the detected Desktop forward and activates the new tab. Use it only after the target Desktop has been detected.
 - After opening a Chrome URL, run `spaceguard windows` or `spaceguard assert --app "Google Chrome"` when practical to confirm the target Desktop still contains the Chrome window.
 - If a new non-Chrome window is needed, create it only when you can verify it appears in the detected Space.
+- If a newly created non-Chrome window appears in the wrong Space, do not treat other pre-existing app windows as repair candidates. Move, close/recreate, or ask the user only for the exact new window identified by snapshot diff.
 - If the same non-Chrome app has windows in multiple Spaces and Computer Use cannot be confirmed against the detected Space, stop instead of clicking, typing, dragging, scrolling, or setting values.
 - If verification is ambiguous, stop and ask the user which window or Space should be used.
 

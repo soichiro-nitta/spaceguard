@@ -113,6 +113,7 @@ spaceguard setup-codex --with-agents-rule --yes
 | --- | --- | --- |
 | `detect --json` | 最初に必ず実行 | このCodexスレッドが属するデスクトップを検出する |
 | `windows --json` | 対象デスクトップの状態確認 | 検出済みデスクトップ内のウィンドウを一覧する |
+| `windows --all-json` | 新規ウィンドウ作成前後の差分確認 | 全デスクトップのウィンドウを一覧し、今回増えたウィンドウだけを識別する |
 | `assert --app "<name>"` | 対象アプリを触る前 | 検出済みデスクトップ内に対象アプリのウィンドウがあるか確認する |
 | `open-url --app "Google Chrome" "<url>"` | ChromeでURLを開く時 | 検出済みデスクトップ内のChromeにバックグラウンドタブを作る |
 | `open-url --activate --app "Google Chrome" "<url>"` | 表示切り替えを許容して開く時 | 検出済みデスクトップ内のChromeを前面化し、新規タブをアクティブにする |
@@ -156,6 +157,16 @@ spaceguard windows --json
 `windows --json`は、参照した現在スレッドの`threadId`、`confidence`、`detectedAt`も返します。直前の`detect --json`と同じスレッド、同じデスクトップを見ているか確認できます。保存済みのスレッド作業場所より新しい同一スレッドの検出結果があり、デスクトップが一致しない場合は、古い保存を無効化して新しい検出結果を参照します。
 
 `windows --json`は通常、現在の`CODEX_THREAD_ID`に紐づく検出結果を参照します。現在スレッドの検出結果が見つからない場合でも、直近60秒以内の`detect`結果があれば、診断用に`source: "recent-last-detection"`として返します。必要な場合は`windows --thread-id <id> --json`で参照するスレッドを明示できます。
+
+全デスクトップのウィンドウを比較用に一覧する場合は、`--all-json`を使います。
+
+```sh
+spaceguard windows --all-json
+```
+
+`windows --all-json`は、全デスクトップのウィンドウ一覧と、現在スレッドの検出済みデスクトップがあれば`targetSpace`を返します。新しいウィンドウを作る必要がある操作では、作成前後で`windows --all-json`を取り、増えたウィンドウIDだけを「今回作ったウィンドウ」として扱います。
+
+既存の別デスクトップのウィンドウを対象デスクトップへ持ってくる、前面化する、再利用する、という扱いはしません。別デスクトップにあるウィンドウを扱えるのは、作成前後のスナップショット差分で今回新規に作られたウィンドウだと識別できる場合だけです。識別できない場合は操作を止めます。
 
 対象デスクトップ内にChromeがあるか確認します。
 
@@ -246,6 +257,8 @@ Before using Computer Use for a non-Chrome macOS app, run `spaceguard windows --
 
 After `get_app_state("<App Name>")`, continue with clicks, typing, scrolling, dragging, or `set_value` only if the visible window title or content can be matched to a window returned by `spaceguard windows --json` for the detected Space. If the same app has windows in multiple Spaces and the target Space cannot be confirmed, stop instead of operating the app.
 
+Do not move, activate, or reuse an existing window from another Space. If a newly created window appears in the wrong Space, handle it only when you captured `spaceguard windows --all-json` before and after creation and can identify that exact new window; otherwise stop.
+
 Re-run `spaceguard detect --json` at the start of every new assistant turn before using Computer Use. Do not rely on a previous turn's GUI state.
 
 For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
@@ -304,6 +317,8 @@ spaceguard detect --json
 spaceguard assert --app "Google Chrome"
 spaceguard open-url --app "Google Chrome" "https://github.com/soichiro-nitta/spaceguard"
 ```
+
+When a task must create a new app window, capture `spaceguard windows --all-json` before and after creation. Existing windows in other Spaces must not be moved, activated, or reused; only the exact newly created window identified by the snapshot diff may be handled.
 
 Install:
 

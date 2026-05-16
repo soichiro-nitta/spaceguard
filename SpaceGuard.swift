@@ -45,11 +45,15 @@ Before using Computer Use for a non-Chrome macOS app, run `spaceguard windows --
 
 After `get_app_state("<App Name>")`, continue with clicks, typing, scrolling, dragging, or `set_value` only if the visible window title or content can be matched to a window returned by `spaceguard windows --json` for the detected Space. If the same app has windows in multiple Spaces and the target Space cannot be confirmed, stop instead of operating the app.
 
+Do not move, activate, or reuse an existing window from another Space. If a newly created window appears in the wrong Space, handle it only when you captured `spaceguard windows --all-json` before and after creation and can identify that exact new window; otherwise stop.
+
 Re-run `spaceguard detect --json` at the start of every new assistant turn before using Computer Use. Do not rely on a previous turn's GUI state.
 
 For Chrome tab creation, tab groups, claiming tabs, finalization, and browser operation details, follow the Codex Chrome Extension workflow and the user's global Chrome-operation rules. Do not use SpaceGuard rules as the source of truth for Chrome tab lifecycle.
 \(spaceGuardRuleEnd)
 """
+
+let cliUsage = "usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json|--all-json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]"
 
 struct WindowInfo {
     let id: Int
@@ -101,6 +105,21 @@ struct WindowsPayload: Encodable {
     let detectedAt: String
     let space: SpacePayload
     let windows: [WindowPayload]
+}
+
+struct SpaceWindowsPayload: Encodable {
+    let space: SpacePayload
+    let windows: [WindowPayload]
+}
+
+struct AllWindowsPayload: Encodable {
+    let ok: Bool
+    let source: String
+    let threadId: String?
+    let threadName: String?
+    let targetSpace: SpacePayload?
+    let capturedAt: String
+    let spaces: [SpaceWindowsPayload]
 }
 
 struct ErrorPayload: Encodable {
@@ -1554,6 +1573,43 @@ enum SpaceGuardCore {
         return 0
     }
 
+    static func allWindowsJSON(threadId: String? = nil) -> Int32 {
+        let snapshot = loadSpacesSnapshot()
+        guard !snapshot.spaces.isEmpty else {
+            printJSON(ErrorPayload(ok: false, error: "Spaces were not found"))
+            return 1
+        }
+
+        let windows = loadWindows()
+        var source = "no-current-thread-detection"
+        var detection: LastDetection?
+        let detectionResult = loadCurrentThreadDetection(threadId: threadId)
+        if case .success(let currentDetection) = detectionResult {
+            source = "current-thread-detection"
+            detection = currentDetection
+        }
+
+        printJSON(AllWindowsPayload(
+            ok: true,
+            source: source,
+            threadId: detection?.threadId ?? threadId ?? currentThreadId(),
+            threadName: detection?.threadName,
+            targetSpace: detection.flatMap { currentDetection in
+                snapshot.spaces.first(where: { $0.uuid == currentDetection.spaceUuid }).map(spacePayload)
+            },
+            capturedAt: ISO8601DateFormatter().string(from: Date()),
+            spaces: snapshot.spaces.map { space in
+                SpaceWindowsPayload(
+                    space: spacePayload(space),
+                    windows: space.windows.compactMap { windows[$0] }
+                        .filter { $0.layer == 0 && $0.width > 20 && $0.height > 20 }
+                        .map(windowPayload)
+                )
+            }
+        ))
+        return 0
+    }
+
     static func setupCodex(options: SetupCodexOptions) -> Int32 {
         print("SpaceGuard Codex setup")
         print("Plugin path: \(pluginInstallURL.path)")
@@ -2028,13 +2084,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 func runCLI(arguments: [String]) {
     guard let command = arguments.first else {
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
+        print(cliUsage)
         exit(2)
     }
 
     switch command {
     case "help", "--help", "-h":
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
+        print(cliUsage)
     case "detect":
         var threadId = ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]
         if
@@ -2061,6 +2117,9 @@ func runCLI(arguments: [String]) {
             arguments.indices.contains(index + 1)
         {
             threadId = arguments[index + 1]
+        }
+        if arguments.contains("--all-json") {
+            exit(SpaceGuardCore.allWindowsJSON(threadId: threadId))
         }
         if arguments.contains("--json") {
             exit(SpaceGuardCore.windowsForLastDetectionJSON(threadId: threadId))
@@ -2126,7 +2185,7 @@ func runCLI(arguments: [String]) {
             print("OK cleared current thread")
         }
     default:
-        print("usage: spaceguard detect [--json] [--thread-id <id>]|windows [--json]|assert --app <name>|open-url [--activate] --app \"Google Chrome\" <url>|setup-codex [--with-agents-rule] [--dry-run] [--yes]|uninstall [--dry-run] [--yes] [--keep-agents-rule]|menubar|status|clear [--all-stale]")
+        print(cliUsage)
         exit(2)
     }
 }
