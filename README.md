@@ -184,7 +184,11 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 同じスレッドの`thread-bound`結果が有効な場合でも、複数のCodexウィンドウが開いているときは`detect`の冒頭で無条件に再利用しません。その時点で見えているCodexウィンドウを取り直し、保存済みの作業場所と一致する場合だけ`thread-bound`として扱います。これにより、別SpaceのCodexで作られた保存済み束縛を誤って信じる事故を避けます。
 
-複数のCodexウィンドウがある場合、SpaceGuardはAccessibilityのメインウィンドウだけを根拠に`high`を返しません。保存済みの`thread-bound`または検証済みの`cached-high`が使えない場合は、現在表示中Spaceのフォールバック検出にも落とさず停止します。これは、ユーザーが見ているデスクトップとCodexのAXメインウィンドウがずれたときに、別SpaceのChromeを開く事故を避けるためです。
+複数のCodexウィンドウがある場合、SpaceGuardはAccessibilityのメインウィンドウだけを根拠に`high`を返しません。まず現在スレッドのElectronウィンドウIDと、最近の検出履歴に残っているElectronウィンドウIDから、対応するnative Codexウィンドウを推定します。ほかのElectronウィンドウに対応済みのCodexウィンドウを除外して候補が1つに絞れた場合は、`electron-window-inferred`として扱います。
+
+`electron-window-inferred`は、候補のCodexウィンドウが現在のSpaces情報内に存在し、同じデスクトップに残っていることを確認した場合だけ返します。これにより、現在のスレッドを表示しているCodexウィンドウがAXメインウィンドウではない場合でも、複数Codexウィンドウの差分から安全に自動特定できます。
+
+`electron-window-inferred`、保存済みの`thread-bound`、または検証済みの`cached-high`が使えない場合は、現在表示中Spaceのフォールバック検出にも落とさず停止します。これは、ユーザーが見ているデスクトップとCodexのAXメインウィンドウがずれたときに、別SpaceのChromeを開く事故を避けるためです。
 
 検出キャッシュとスレッド別保存には形式バージョンを持たせています。Space判定ロジックが変わった後は、古い形式の保存済み作業場所や検出結果を無効化し、次回`detect`で再検出します。これにより、古い実装で誤って保存されたCodexウィンドウを更新後も使い続ける事故を避けます。
 
@@ -192,7 +196,7 @@ SpaceGuardは、タブを開く前に対象Spaceを判定し、別SpaceのChrome
 
 スレッド別保存がない場合でも、同じスレッドで10分以内に`high`として検出済みで、同じCodexウィンドウが同じデスクトップに残っているときは`cached-high`としてその結果を再利用します。これは、ユーザーが別デスクトップを見ている間に`fallback-active-space`が現在表示中のデスクトップで検出結果を上書きしてしまう事故を避けるためです。キャッシュが古い、ウィンドウが移動済み、またはCodexウィンドウが見つからない場合は再利用しません。
 
-`confidence=high`で検出できた場合、SpaceGuardは`~/.spaceguard/thread-spaces/<thread-id>.json`へ現在スレッドの作業場所を自動保存します。`open-url`、`assert`、`windows`はこのスレッド別保存を優先します。`fallback-active-space`は現在表示中のデスクトップへ寄る可能性があるため、永続保存しません。
+`confidence=high`または`confidence=electron-window-inferred`で検出できた場合、SpaceGuardは`~/.spaceguard/thread-spaces/<thread-id>.json`へ現在スレッドの作業場所を自動保存します。`open-url`、`assert`、`windows`はこのスレッド別保存を優先します。`fallback-active-space`は現在表示中のデスクトップへ寄る可能性があるため、永続保存しません。
 
 スレッド別保存がない状態で検出ファイルだけを使う場合、`high`は10分以内、`fallback-active-space`などの弱い検出は60秒以内のものだけを操作に使います。古い場合は`detect --json`の再実行を求めて停止します。`fallback-active-space`はCodexウィンドウが1つだけのときの補助経路で、複数Codexウィンドウがある状態では返しません。
 
@@ -229,7 +233,7 @@ spaceguard open-url --activate --app "Google Chrome" "https://github.com/soichir
 ```md
 Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard only to identify the target macOS Desktop/Space for this Codex thread.
 
-Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
+Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `electron-window-inferred`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 

@@ -21,13 +21,13 @@ brew install --HEAD spaceguard
 ## Required Flow
 
 1. Run `spaceguard detect --json`.
-2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
+2. Continue only when the JSON has `ok: true` and `confidence` is `high`, `electron-window-inferred`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 3. Treat `space.desktopName` as the only target Desktop/Space for this turn.
 4. When multiple Codex or Chrome windows may be open, run `spaceguard windows --json` after `detect --json` and confirm it reports the same `threadId`, same `space.desktopIndex`, and `source: "current-thread-detection"` or a clearly recent `source: "recent-last-detection"`.
 5. State the detected Desktop and confidence briefly before using Chrome or Computer Use.
 6. Before operating a named app when practical, run `spaceguard assert --app "<App Name>"`.
 7. If detection fails, confidence is lower, `windows --json` disagrees with `detect --json`, or the target app is not in the detected Desktop, do not operate an existing window from another Space.
-8. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a validated `thread-bound` or `cached-high` result for the same thread is returned.
+8. If detection reports that multiple Codex windows are open and no thread/window hint is available, stop unless a validated `electron-window-inferred`, `thread-bound`, or `cached-high` result for the same thread is returned.
 9. Do not manually bind a Desktop. When detection is ambiguous, ask the user to bring the target Codex thread into view and run `spaceguard detect --json` again.
 10. Run SpaceGuard commands sequentially. Do not call `detect`, `windows`, `assert`, or `open-url` in parallel, because they read or update the current thread's detection state.
 
@@ -46,9 +46,10 @@ brew install --HEAD spaceguard
 
 - The target Space is the Space containing the Codex window for the current thread, not necessarily the Space the user is currently viewing.
 - A `high` detection persists the current thread's target Space. Later `windows`, `assert`, and `open-url` prefer that saved thread Space.
+- `electron-window-inferred` means SpaceGuard matched the current thread's Electron window ID to a native Codex window by comparing recent validated detections for other Electron windows, then persisted that target Space.
 - `thread-bound` means SpaceGuard reused the saved target Space for the current Codex thread after confirming the saved Codex window still exists in that Space.
 - With multiple Codex windows open, do not trust `thread-bound` by itself. Confirm `detect --json` and `windows --json` agree before touching Chrome or other desktop apps.
-- With multiple Codex windows open, SpaceGuard does not return `high` from the accessibility main window alone and does not fall back to `fallback-active-space`. It must reuse a validated `thread-bound` or `cached-high` result, otherwise stop.
+- With multiple Codex windows open, SpaceGuard does not return `high` from the accessibility main window alone and does not fall back to `fallback-active-space`. It must infer `electron-window-inferred` or reuse a validated `thread-bound` or `cached-high` result, otherwise stop.
 - If `windows --json`, `assert`, or `open-url` would reuse a saved thread Space but a newer same-thread `detect` result points to a different Desktop, SpaceGuard invalidates the saved Space and uses the newer detection instead.
 - `cached-high` means SpaceGuard reused a `high` result from the same thread only after confirming the cached Codex window still exists in the same Desktop and the cache is recent. Treat it as the current thread's target Space, but re-run `detect` if the user says the Codex window moved.
 - `fallback-active-space` is weaker than `high` and can reflect the currently visible Desktop. It is only allowed when a single Codex window is open, and it is not persisted as the current thread's target Space.

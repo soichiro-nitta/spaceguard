@@ -24,6 +24,7 @@ let codexAgentsURL = URL(fileURLWithPath: spaceGuardHomeDirectory())
     .appendingPathComponent(".codex/AGENTS.md")
 let highConfidenceCacheMaxAgeSeconds: TimeInterval = 600
 let recentLastDetectionMaxAgeSeconds: TimeInterval = 60
+let knownElectronWindowMappingMaxAgeSeconds: TimeInterval = 60 * 60 * 36
 let threadSpaceMaxAgeSeconds: TimeInterval = 60 * 60 * 24 * 30
 let currentDetectionSchemaVersion = 4
 let currentThreadSpaceSchemaVersion = 4
@@ -35,7 +36,7 @@ let spaceGuardRuleBlock = """
 
 Before using Chrome, Computer Use, or macOS desktop automation, use SpaceGuard only to identify the target macOS Desktop/Space for this Codex thread.
 
-Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `thread-bound`, `cached-high`, or `fallback-active-space`.
+Run `spaceguard detect --json` and treat the detected `space.desktopName` as the target Space when `confidence` is `high`, `electron-window-inferred`, `thread-bound`, `cached-high`, or `fallback-active-space`.
 
 If multiple Codex windows are open and SpaceGuard cannot infer the current thread's window, stop and ask the user to bring the target Codex thread into view before continuing.
 
@@ -311,7 +312,7 @@ enum SpaceGuardCore {
             )
             try? data.write(to: detectionURL(threadId: detection.threadId))
         }
-        if detection.confidence == "high" {
+        if detection.confidence == "high" || detection.confidence == "electron-window-inferred" {
             saveThreadSpaceBinding(detection)
         }
     }
@@ -840,10 +841,19 @@ enum SpaceGuardCore {
         }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         let matches = regex.matches(in: text, options: [], range: range)
-        guard let match = matches.last, let idRange = Range(match.range(at: 1), in: text) else {
+        if let match = matches.last, let idRange = Range(match.range(at: 1), in: text) {
+            return String(text[idRange])
+        }
+
+        let rendererPattern = #""renderer_webcontents_id"\s*:\s*([0-9]+)"#
+        guard let rendererRegex = try? NSRegularExpression(pattern: rendererPattern) else {
             return nil
         }
-        return String(text[idRange])
+        let rendererMatches = rendererRegex.matches(in: text, options: [], range: range)
+        guard let rendererMatch = rendererMatches.last, let rendererIdRange = Range(rendererMatch.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[rendererIdRange])
     }
 
     static func currentThreadName(threadId: String) -> String? {
@@ -1010,10 +1020,19 @@ enum SpaceGuardCore {
         let spaces = snapshot.spaces
         let windows = loadWindows()
         let electronId = latestCodexElectronWindowId(threadId: threadId)
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
+        let totalCodexWindows = windows.values.filter(isCodexWindowCandidate).count
         if totalCodexWindows > 1 {
+            if
+                let inferred = inferredElectronWindowDetection(
+                    threadId: threadId,
+                    threadName: currentThreadName(threadId: threadId),
+                    electronId: electronId,
+                    spaces: spaces,
+                    windows: windows
+                )
+            {
+                return .success(inferred)
+            }
             if let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows) {
                 return .success(bound)
             }
@@ -1062,9 +1081,7 @@ enum SpaceGuardCore {
             )
         }
 
-        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter(isCodexWindowCandidate).count
         if
             let bound = threadSpaceDetectionResult(threadId: threadId, spaces: spaces, windows: windows),
             bound.window.id == window.id,
@@ -1091,9 +1108,7 @@ enum SpaceGuardCore {
         windows: [Int: WindowInfo],
         failureReason: String
     ) -> Result<DetectionResult, DetectionError> {
-        let totalCodexWindows = windows.values.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
+        let totalCodexWindows = windows.values.filter(isCodexWindowCandidate).count
         if totalCodexWindows <= 1, let bound = threadSpaceDetectionResult(threadId: threadId, spaces: snapshot.spaces, windows: windows) {
             return .success(bound)
         }
@@ -1107,13 +1122,7 @@ enum SpaceGuardCore {
         let activeSpaces = snapshot.spaces.filter { snapshot.activeSpaceUuids.contains($0.uuid) }
         let activeCodexMatches = activeSpaces.flatMap { space in
             space.windows.compactMap { id -> (SpaceInfo, WindowInfo)? in
-                guard
-                    let window = windows[id],
-                    window.owner == "Codex",
-                    window.layer == 0,
-                    window.width > 200,
-                    window.height > 200
-                else {
+                guard let window = windows[id], isCodexWindowCandidate(window) else {
                     return nil
                 }
                 return (space, window)
@@ -1122,9 +1131,7 @@ enum SpaceGuardCore {
         guard activeCodexMatches.count == 1, let match = activeCodexMatches.first else {
             return .failure(DetectionError(message: "NG \(failureReason); active Space Codex fallback expected 1 match, got \(activeCodexMatches.count) for thread=\(threadId)"))
         }
-        let codexCountInSpace = match.0.windows.compactMap { windows[$0] }.filter {
-            $0.owner == "Codex" && $0.layer == 0 && $0.width > 200 && $0.height > 200
-        }.count
+        let codexCountInSpace = match.0.windows.compactMap { windows[$0] }.filter(isCodexWindowCandidate).count
         return .success(DetectionResult(
             confidence: "fallback-active-space",
             threadId: threadId,
@@ -1134,6 +1141,124 @@ enum SpaceGuardCore {
             space: match.0,
             codexWindowsInSpace: codexCountInSpace
         ))
+    }
+
+    static func inferredElectronWindowDetection(
+        threadId: String,
+        threadName: String?,
+        electronId: String?,
+        spaces: [SpaceInfo],
+        windows: [Int: WindowInfo]
+    ) -> DetectionResult? {
+        guard let electronId else {
+            return nil
+        }
+        let codexWindows = windows.values.filter(isCodexWindowCandidate)
+        let knownMappings = knownElectronWindowMappings(spaces: spaces, windows: windows)
+        if let windowId = knownMappings[electronId], let window = windows[windowId] {
+            return detectionResultFromElectronInference(
+                threadId: threadId,
+                threadName: threadName,
+                electronId: electronId,
+                window: window,
+                spaces: spaces,
+                windows: windows
+            )
+        }
+
+        let knownOtherWindowIds = Set(knownMappings.filter { $0.key != electronId }.map(\.value))
+        let remaining = codexWindows.filter { !knownOtherWindowIds.contains($0.id) }
+        guard remaining.count == 1, let window = remaining.first else {
+            return nil
+        }
+        return detectionResultFromElectronInference(
+            threadId: threadId,
+            threadName: threadName,
+            electronId: electronId,
+            window: window,
+            spaces: spaces,
+            windows: windows
+        )
+    }
+
+    static func detectionResultFromElectronInference(
+        threadId: String,
+        threadName: String?,
+        electronId: String,
+        window: WindowInfo,
+        spaces: [SpaceInfo],
+        windows: [Int: WindowInfo]
+    ) -> DetectionResult? {
+        guard
+            isCodexWindowCandidate(window),
+            let space = spaces.first(where: { $0.windows.contains(window.id) })
+        else {
+            return nil
+        }
+        let codexCountInSpace = space.windows.compactMap { windows[$0] }.filter(isCodexWindowCandidate).count
+        return DetectionResult(
+            confidence: "electron-window-inferred",
+            threadId: threadId,
+            threadName: threadName,
+            electronWindowId: electronId,
+            window: window,
+            space: space,
+            codexWindowsInSpace: codexCountInSpace
+        )
+    }
+
+    static func knownElectronWindowMappings(spaces: [SpaceInfo], windows: [Int: WindowInfo]) -> [String: Int] {
+        var records: [(electronWindowId: String, cgWindowId: Int, detectedAt: Date)] = []
+        for detection in loadKnownElectronWindowDetections() {
+            guard
+                let electronWindowId = detection.electronWindowId,
+                detection.confidence == "high" || detection.confidence == "electron-window-inferred",
+                let detectedAt = date(from: detection.detectedAt),
+                Date().timeIntervalSince(detectedAt) <= knownElectronWindowMappingMaxAgeSeconds,
+                let window = windows[detection.cgWindowId],
+                isCodexWindowCandidate(window),
+                let space = spaces.first(where: { $0.uuid == detection.spaceUuid }),
+                space.windows.contains(detection.cgWindowId)
+            else {
+                continue
+            }
+            records.append((electronWindowId, detection.cgWindowId, detectedAt))
+        }
+
+        let newestByElectronId = records.sorted { $0.detectedAt > $1.detectedAt }.reduce(into: [String: (cgWindowId: Int, detectedAt: Date)]()) { result, record in
+            if result[record.electronWindowId] == nil {
+                result[record.electronWindowId] = (record.cgWindowId, record.detectedAt)
+            }
+        }
+        let idsWithWindowConflict = Dictionary(grouping: newestByElectronId, by: { $0.value.cgWindowId })
+            .filter { $0.value.count > 1 }
+            .flatMap { $0.value.map(\.key) }
+        return newestByElectronId.filter { !idsWithWindowConflict.contains($0.key) }.mapValues(\.cgWindowId)
+    }
+
+    static func loadKnownElectronWindowDetections() -> [LastDetection] {
+        guard
+            let urls = try? FileManager.default.contentsOfDirectory(
+                at: detectionsDirectoryURL,
+                includingPropertiesForKeys: nil
+            )
+        else {
+            return []
+        }
+        return urls.compactMap { url in
+            guard
+                url.pathExtension == "json",
+                let data = try? Data(contentsOf: url),
+                let detection = try? JSONDecoder().decode(LastDetection.self, from: data)
+            else {
+                return nil
+            }
+            return detection
+        }
+    }
+
+    static func isCodexWindowCandidate(_ window: WindowInfo) -> Bool {
+        window.owner == "Codex" && window.layer == 0 && window.width > 200 && window.height > 200
     }
 
     static func cachedDetectionResult(
